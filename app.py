@@ -460,6 +460,8 @@ if 'quiz_result' not in st.session_state:
     st.session_state.quiz_result = None
 if 'last_refresh' not in st.session_state:
     st.session_state.last_refresh = 0
+if 'force_refresh' not in st.session_state:
+    st.session_state.force_refresh = False
 
 # Load data
 load_data()
@@ -490,6 +492,7 @@ st.markdown("""
         border-radius: 10px;
         box-shadow: 0 4px 12px rgba(0,0,0,0.15);
         border: 2px solid #e0e0e0;
+        min-width: 160px;
     }
     .timer-container {
         background: #4CAF50;
@@ -499,7 +502,6 @@ st.markdown("""
         text-align: center;
         border: 2px solid #45a049;
         font-family: Arial, sans-serif;
-        min-width: 140px;
         margin-bottom: 10px;
     }
     .timer-warning {
@@ -546,21 +548,21 @@ st.markdown("""
 </div>
 """, unsafe_allow_html=True)
 
-# Auto-refresh and auto-submit logic
+# Improved auto-refresh and auto-submit logic
 if st.session_state.quiz_active and st.session_state.quiz_start_time and st.session_state.quiz_duration:
     current_time = time.time()
     elapsed_time = current_time - st.session_state.quiz_start_time
     remaining_time = max(0, st.session_state.quiz_duration - elapsed_time)
     
-    # Auto-refresh every 2 seconds to check for time expiration
-    if current_time - st.session_state.last_refresh >= 2:
+    # Auto-refresh every 1 second to check for time expiration
+    if current_time - st.session_state.last_refresh >= 1:
         st.session_state.last_refresh = current_time
         
         # Check if time expired and auto-submit
         if remaining_time <= 0 and not st.session_state.auto_submitted:
             st.session_state.time_expired = True
             st.session_state.auto_submitted = True
-            st.rerun()
+            st.session_state.force_refresh = True
 
 # Handle auto-submission
 if st.session_state.auto_submitted and st.session_state.quiz_active:
@@ -573,15 +575,17 @@ if st.session_state.auto_submitted and st.session_state.quiz_active:
             answers.append(st.session_state.student_answers.get(answer_key))
         
         # Submit quiz
-        result_html, record = submit_student_quiz(
+        result = submit_student_quiz(
             st.session_state.current_quiz_id,
             st.session_state.current_student_name,
             st.session_state.current_student_email,
             answers
         )
         
-        # Store result in session state
-        st.session_state.quiz_result = result_html
+        if isinstance(result, tuple) and len(result) == 2:
+            result_html, record = result
+            # Store result in session state
+            st.session_state.quiz_result = result_html
         
         # Reset quiz state but keep result
         st.session_state.quiz_active = False
@@ -591,8 +595,12 @@ if st.session_state.auto_submitted and st.session_state.quiz_active:
         st.session_state.quiz_duration = None
         st.session_state.time_expired = False
         st.session_state.auto_submitted = False
-        
-        st.rerun()
+        st.session_state.force_refresh = True
+
+# Force refresh if needed
+if st.session_state.get('force_refresh', False):
+    st.session_state.force_refresh = False
+    st.rerun()
 
 # Create tabs
 tab1, tab2 = st.tabs(["🎓 Student Panel", "👨‍🏫 Teacher Admin Panel"])
@@ -670,7 +678,7 @@ with tab1:
                     elif remaining_time < st.session_state.quiz_duration // 2:
                         timer_class = "timer-warning"
                     
-                    # Display timer in a fixed position wrapper
+                    # Display timer in a fixed position wrapper WITH the update button
                     st.markdown(f"""
                     <div class="timer-wrapper">
                         <div class="timer-container {timer_class}">
@@ -685,12 +693,6 @@ with tab1:
                     </div>
                     """, unsafe_allow_html=True)
                 
-                # Update timer button - placed in the main content area
-                col1, col2, col3 = st.columns([2, 1, 2])
-                with col2:
-                    if st.button("🔄 Update Timer", key="update_timer_btn", use_container_width=True):
-                        st.rerun()
-                
                 # Time expired warning
                 if st.session_state.time_expired:
                     st.error("⏰ TIME'S UP! Your quiz is being submitted...")
@@ -699,7 +701,7 @@ with tab1:
                 <div class="quiz-container">
                     <h3>📝 Taking Quiz: {quiz['title']}</h3>
                     <p><strong>Total Questions:</strong> {len(questions)} | <strong>Time Allowed:</strong> {duration_minutes} minutes</p>
-                    <p><em>Select your answer for each question below. Timer updates automatically every 2 seconds.</em></p>
+                    <p><em>Select your answer for each question below. Timer updates automatically every second.</em></p>
                 </div>
                 """, unsafe_allow_html=True)
                 
@@ -740,15 +742,17 @@ with tab1:
                             answers.append(st.session_state.student_answers.get(answer_key))
                         
                         # Submit quiz
-                        result_html, record = submit_student_quiz(
+                        result = submit_student_quiz(
                             st.session_state.current_quiz_id,
                             st.session_state.current_student_name,
                             st.session_state.current_student_email,
                             answers
                         )
                         
-                        # Store result
-                        st.session_state.quiz_result = result_html
+                        if isinstance(result, tuple) and len(result) == 2:
+                            result_html, record = result
+                            # Store result
+                            st.session_state.quiz_result = result_html
                         
                         # Reset quiz state
                         st.session_state.quiz_active = False
@@ -904,7 +908,8 @@ with tab2:
         
         if student_records:
             # Use st.markdown with unsafe_allow_html=True to render the HTML table
-            st.markdown(get_student_records_display(), unsafe_allow_html=True)
+            records_html = get_student_records_display()
+            st.markdown(records_html, unsafe_allow_html=True)
             
             if st.button("📥 Download Excel Report", key="download_btn"):
                 excel_data, filename = generate_student_report()
@@ -914,10 +919,12 @@ with tab2:
                         data=excel_data,
                         file_name=filename,
                         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                        key="download_report_btn"
+                        key="download_excel_btn"
                     )
+                else:
+                    st.error("Could not generate Excel report.")
         else:
-            st.info("ℹ️ No student records yet. Students need to complete quizzes first.")
+            st.info("📝 No student records yet. Students need to take quizzes first.")
         
         # Logout button
         if st.button("🚪 Logout", key="logout_btn"):
@@ -927,7 +934,7 @@ with tab2:
 # Footer
 st.markdown("---")
 st.markdown("""
-<div style="text-align: center; color: #666; font-size: 12px;">
-    <p>🎯 Digital Pakistan Quiz Management System | Built with Streamlit</p>
+<div style="text-align: center; color: #666;">
+    <p>🎯 <strong>Digital Pakistan Quiz Management System</strong> - Streamlining education through technology</p>
 </div>
 """, unsafe_allow_html=True)
