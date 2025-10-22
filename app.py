@@ -476,6 +476,10 @@ if 'student_answers' not in st.session_state:
     st.session_state.student_answers = {}
 if 'last_update' not in st.session_state:
     st.session_state.last_update = 0
+if 'current_student_name' not in st.session_state:
+    st.session_state.current_student_name = ""
+if 'current_student_email' not in st.session_state:
+    st.session_state.current_student_email = ""
 
 # Load data
 load_data()
@@ -591,8 +595,8 @@ if st.session_state.auto_submit:
         # Submit quiz
         result = submit_student_quiz(
             st.session_state.current_quiz_id,
-            st.session_state.student_name,
-            st.session_state.student_email,
+            st.session_state.current_student_name,
+            st.session_state.current_student_email,
             answers
         )
         
@@ -601,6 +605,8 @@ if st.session_state.auto_submit:
         st.session_state.auto_submit = False
         st.session_state.current_quiz_id = None
         st.session_state.student_answers = {}
+        st.session_state.current_student_name = ""
+        st.session_state.current_student_email = ""
         
         st.markdown(result, unsafe_allow_html=True)
         st.rerun()
@@ -639,8 +645,8 @@ with tab1:
             else:
                 initialize_timer(selected_quiz_option)
                 st.session_state.current_quiz_id = selected_quiz_option
-                st.session_state.student_name = student_name
-                st.session_state.student_email = student_email
+                st.session_state.current_student_name = student_name
+                st.session_state.current_student_email = student_email
                 st.session_state.student_answers = {}
                 st.rerun()
         
@@ -694,8 +700,8 @@ with tab1:
                 # Submit quiz
                 result = submit_student_quiz(
                     st.session_state.current_quiz_id,
-                    st.session_state.student_name,
-                    st.session_state.student_email,
+                    st.session_state.current_student_name,
+                    st.session_state.current_student_email,
                     answers
                 )
                 
@@ -704,6 +710,8 @@ with tab1:
                 st.session_state.auto_submit = False
                 st.session_state.current_quiz_id = None
                 st.session_state.student_answers = {}
+                st.session_state.current_student_name = ""
+                st.session_state.current_student_email = ""
                 
                 # Show result
                 st.markdown(result, unsafe_allow_html=True)
