@@ -1,0 +1,880 @@
+import streamlit as st
+import pandas as pd
+from datetime import datetime
+import re
+import io
+import uuid
+import json
+import os
+import time
+
+# Import libraries with error handling
+try:
+    from PyPDF2 import PdfReader
+    PDF_SUPPORT = True
+except ImportError:
+    PDF_SUPPORT = False
+    st.warning("PyPDF2 not installed. PDF uploads will not work.")
+
+try:
+    from docx import Document
+    DOCX_SUPPORT = True
+except ImportError:
+    DOCX_SUPPORT = False
+    st.warning("python-docx not installed. DOCX uploads will not work.")
+
+# File paths for persistence
+QUIZZES_FILE = "quizzes.json"
+STUDENT_RECORDS_FILE = "student_records.json"
+COUNTER_FILE = "counter.json"
+
+# Authentication credentials
+ADMIN_CREDENTIALS = {
+    "admin": "Admin123"
+}
+
+# Global variables to store data
+quizzes_dict = {}
+student_records = []
+quiz_counter = 0
+
+def load_data():
+    """Load data from JSON files"""
+    global quizzes_dict, student_records, quiz_counter
+    
+    try:
+        # Load quizzes
+        if os.path.exists(QUIZZES_FILE):
+            with open(QUIZZES_FILE, 'r', encoding='utf-8') as f:
+                quizzes_dict = json.load(f)
+        else:
+            quizzes_dict = {}
+        
+        # Load student records
+        if os.path.exists(STUDENT_RECORDS_FILE):
+            with open(STUDENT_RECORDS_FILE, 'r', encoding='utf-8') as f:
+                student_records = json.load(f)
+        else:
+            student_records = []
+        
+        # Load counter
+        if os.path.exists(COUNTER_FILE):
+            with open(COUNTER_FILE, 'r', encoding='utf-8') as f:
+                counter_data = json.load(f)
+                quiz_counter = counter_data.get('quiz_counter', 0)
+        else:
+            quiz_counter = 0
+            
+    except Exception as e:
+        st.error(f"Error loading data: {str(e)}")
+        # Initialize empty data if loading fails
+        quizzes_dict = {}
+        student_records = []
+        quiz_counter = 0
+
+def save_quizzes():
+    """Save quizzes to JSON file"""
+    try:
+        with open(QUIZZES_FILE, 'w', encoding='utf-8') as f:
+            json.dump(quizzes_dict, f, indent=2, ensure_ascii=False)
+    except Exception as e:
+        st.error(f"Error saving quizzes: {str(e)}")
+
+def save_student_records():
+    """Save student records to JSON file"""
+    try:
+        with open(STUDENT_RECORDS_FILE, 'w', encoding='utf-8') as f:
+            json.dump(student_records, f, indent=2, ensure_ascii=False)
+    except Exception as e:
+        st.error(f"Error saving student records: {str(e)}")
+
+def save_counter():
+    """Save counter to JSON file"""
+    try:
+        with open(COUNTER_FILE, 'w', encoding='utf-8') as f:
+            json.dump({'quiz_counter': quiz_counter}, f, indent=2)
+    except Exception as e:
+        st.error(f"Error saving counter: {str(e)}")
+
+def authenticate_user(username, password):
+    """Authenticate admin/teacher user"""
+    if username in ADMIN_CREDENTIALS and ADMIN_CREDENTIALS[username] == password:
+        return True, "Authentication successful!"
+    else:
+        return False, "Invalid username or password!"
+
+def generate_mcqs_from_text(text, num_questions=5):
+    """Generate MCQs from descriptive text"""
+    try:
+        # Split text into sentences
+        sentences = re.split(r'[.!?]+', text)
+        sentences = [s.strip() for s in sentences if len(s.strip()) > 20]
+        
+        if len(sentences) < num_questions:
+            num_questions = len(sentences)
+        
+        questions = []
+        
+        for i in range(num_questions):
+            if i >= len(sentences):
+                break
+                
+            sentence = sentences[i]
+            words = sentence.split()
+            
+            if len(words) < 5:
+                continue
+                
+            # Create question
+            question_text = f"What is the main idea of: '{sentence[:100]}...'?"
+            
+            # Generate options
+            options = [
+                "The text discusses general concepts",
+                f"The passage focuses on {words[2] if len(words) > 2 else 'key'} aspects",
+                "It describes historical events",
+                "The content explains technical details"
+            ]
+            
+            questions.append({
+                'question_text': question_text,
+                'options': options,
+                'correct_answer': 0,  # Default to first option
+                'auto_generated': True
+            })
+        
+        return questions
+        
+    except Exception as e:
+        st.error(f"Error generating MCQs: {str(e)}")
+        return []
+
+def parse_document(file_obj, generate_mcqs=False):
+    """Parse PDF or DOCX file and extract MCQs"""
+    global quiz_counter
+    
+    try:
+        if file_obj is None:
+            return "Please select a file to upload."
+        
+        text = ""
+        filename = file_obj.name
+        
+        try:
+            if filename.endswith('.pdf'):
+                if not PDF_SUPPORT:
+                    return "PDF support not available. Please install PyPDF2."
+                # Read PDF file
+                pdf_reader = PdfReader(file_obj)
+                for page in pdf_reader.pages:
+                    page_text = page.extract_text()
+                    if page_text:
+                        text += page_text + "\n"
+                    
+            elif filename.endswith('.docx'):
+                if not DOCX_SUPPORT:
+                    return "DOCX support not available. Please install python-docx."
+                # Read DOCX file
+                doc = Document(file_obj)
+                for paragraph in doc.paragraphs:
+                    if paragraph.text.strip():
+                        text += paragraph.text + "\n"
+            else:
+                return "Unsupported file format. Please upload PDF or DOCX."
+        
+        except Exception as e:
+            return f"Error reading file: {str(e)}"
+        
+        if not text.strip():
+            return "No readable text found in the document."
+        
+        # Parse or generate MCQs
+        if generate_mcqs:
+            questions = generate_mcqs_from_text(text)
+            if not questions:
+                return "Could not generate MCQs from the document."
+            message = f"✅ Successfully generated {len(questions)} MCQs"
+        else:
+            questions = parse_mcqs_from_text(text)
+            if not questions:
+                return "No MCQs found in the document."
+            message = f"✅ Successfully parsed {len(questions)} questions"
+        
+        # Create quiz entry
+        quiz_counter += 1
+        quiz_id = f"quiz_{quiz_counter}"
+        quiz_title = os.path.basename(filename)
+        
+        quizzes_dict[quiz_id] = {
+            'title': quiz_title,
+            'questions': questions,
+            'filename': filename,
+            'enabled': False,
+            'auto_generated': generate_mcqs,
+            'duration_minutes': len(questions)
+        }
+        
+        # Save data
+        save_quizzes()
+        save_counter()
+        
+        return f"{message} - Duration: {len(questions)} minutes"
+    
+    except Exception as e:
+        return f"Unexpected error: {str(e)}"
+
+def parse_mcqs_from_text(text):
+    """Extract MCQs from text"""
+    questions = []
+    
+    try:
+        # Clean the text
+        text = re.sub(r'\r\n', '\n', text)
+        text = re.sub(r'\n+', '\n', text)
+        
+        lines = [line.strip() for line in text.split('\n') if line.strip()]
+        
+        i = 0
+        while i < len(lines):
+            line = lines[i]
+            
+            # Check if this is a question line
+            if '?' in line and len(line) > 10:
+                question_text = line
+                options = []
+                i += 1
+                
+                # Look for options in subsequent lines
+                option_count = 0
+                while i < len(lines) and option_count < 4:
+                    current_line = lines[i]
+                    
+                    # Check if this is an option (starts with A., B., etc.)
+                    if re.match(r'^[A-D][\.\)]', current_line, re.IGNORECASE):
+                        option_text = re.sub(r'^[A-D][\.\)]\s*', '', current_line, flags=re.IGNORECASE)
+                        options.append(option_text.strip())
+                        option_count += 1
+                    # Stop if we find another question
+                    elif '?' in current_line and len(current_line) > 10:
+                        break
+                    
+                    i += 1
+                
+                if question_text and len(options) >= 2:
+                    # Pad options to 4 if needed
+                    while len(options) < 4:
+                        options.append("")
+                    
+                    questions.append({
+                        'question_text': question_text,
+                        'options': options,
+                        'correct_answer': None,
+                        'auto_generated': False
+                    })
+                else:
+                    i += 1
+            else:
+                i += 1
+        
+        return questions
+    
+    except Exception as e:
+        st.error(f"Error parsing MCQs: {str(e)}")
+        return []
+
+def get_student_quiz_choices():
+    """Get choices for student quiz dropdown"""
+    choices = []
+    for quiz_id, quiz_data in quizzes_dict.items():
+        if quiz_data['enabled']:
+            total_questions = len(quiz_data['questions'])
+            correct_set = sum(1 for q in quiz_data['questions'] if q['correct_answer'] is not None)
+            if correct_set == total_questions:
+                duration = quiz_data.get('duration_minutes', total_questions)
+                choices.append((quiz_id, f"📝 {quiz_data['title']} ({total_questions} questions, {duration} minutes)"))
+    
+    # If no choices, add a helpful message
+    if not choices:
+        choices.append(("", "❌ No quizzes available - teacher must enable quizzes and set answers"))
+    
+    return choices
+
+def toggle_quiz_enabled(quiz_id):
+    """Toggle quiz enabled/disabled status"""
+    if quiz_id and quiz_id in quizzes_dict:
+        quizzes_dict[quiz_id]['enabled'] = not quizzes_dict[quiz_id]['enabled']
+        status = "enabled" if quizzes_dict[quiz_id]['enabled'] else "disabled"
+        save_quizzes()
+        return f"✅ Quiz {status} successfully!"
+    return "❌ No quiz selected"
+
+def submit_student_quiz(quiz_id, student_name, student_email, answers):
+    """Process student quiz submission"""
+    if not quiz_id or quiz_id not in quizzes_dict:
+        return "❌ Quiz not found. Please refresh and try again."
+    
+    if not student_name.strip() or not student_email.strip():
+        return "❌ Please enter your name and email."
+    
+    quiz = quizzes_dict[quiz_id]
+    questions = quiz['questions']
+    
+    # Calculate score
+    score = 0
+    total = len(questions)
+    detailed_results = []
+    
+    for i, question in enumerate(questions):
+        student_answer = answers[i] if i < len(answers) else None
+        correct_answer_index = question['correct_answer']
+        
+        is_correct = False
+        if student_answer is not None and correct_answer_index is not None:
+            is_correct = (student_answer == correct_answer_index)
+        
+        if is_correct:
+            score += 1
+        
+        detailed_results.append({
+            'question': question['question_text'],
+            'student_answer': f"{chr(65 + student_answer)}: {question['options'][student_answer]}" if student_answer is not None else "Not answered",
+            'correct_answer': f"{chr(65 + correct_answer_index)}: {question['options'][correct_answer_index]}" if correct_answer_index is not None else "Not set",
+            'is_correct': is_correct
+        })
+    
+    # Store student record
+    record = {
+        'id': str(uuid.uuid4())[:8],
+        'quiz_id': quiz_id,
+        'quiz_title': quiz['title'],
+        'student_name': student_name.strip(),
+        'student_email': student_email.strip(),
+        'timestamp': datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        'score': score,
+        'total_questions': total,
+        'percentage': round((score / total) * 100, 2),
+        'detailed_results': detailed_results
+    }
+    
+    student_records.append(record)
+    save_student_records()
+    
+    return f"""
+    <div style="padding: 20px; border: 2px solid #4CAF50; border-radius: 10px; background: #f9fff9;">
+        <h3 style="color: #4CAF50; text-align: center;">🎉 Quiz Completed!</h3>
+        <div style="text-align: center; margin: 20px 0;">
+            <h2>Score: {score}/{total} ({record['percentage']}%)</h2>
+        </div>
+        <div style="background: white; padding: 15px; border-radius: 8px;">
+            <p><strong>Name:</strong> {student_name}</p>
+            <p><strong>Email:</strong> {student_email}</p>
+            <p><strong>Quiz:</strong> {quiz['title']}</p>
+            <p><strong>Date/Time:</strong> {record['timestamp']}</p>
+        </div>
+    </div>
+    """
+
+def generate_student_report():
+    """Generate Excel report of all student results"""
+    if not student_records:
+        return "❌ No student records found.", None
+    
+    # Create DataFrame
+    data = []
+    for record in student_records:
+        data.append({
+            'Student ID': record['id'],
+            'Student Name': record['student_name'],
+            'Student Email': record['student_email'],
+            'Quiz Title': record['quiz_title'],
+            'Date/Time': record['timestamp'],
+            'Score': record['score'],
+            'Total Questions': record['total_questions'],
+            'Percentage': f"{record['percentage']}%"
+        })
+    
+    df = pd.DataFrame(data)
+    
+    # Create Excel file in memory
+    output = io.BytesIO()
+    with pd.ExcelWriter(output, engine='openpyxl') as writer:
+        df.to_excel(writer, sheet_name='Student Results', index=False)
+    
+    output.seek(0)
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    filename = f"student_results_{timestamp}.xlsx"
+    
+    return output, filename
+
+def get_student_records_display():
+    """Get formatted display of student records"""
+    if not student_records:
+        return "No student records yet."
+    
+    html = """
+    <div style="max-height: 400px; overflow-y: auto;">
+        <table style="width: 100%; border-collapse: collapse;">
+            <thead>
+                <tr style="background: #f5f5f5;">
+                    <th style="padding: 10px; border: 1px solid #ddd; text-align: left;">Name</th>
+                    <th style="padding: 10px; border: 1px solid #ddd; text-align: left;">Email</th>
+                    <th style="padding: 10px; border: 1px solid #ddd; text-align: left;">Quiz</th>
+                    <th style="padding: 10px; border: 1px solid #ddd; text-align: center;">Score</th>
+                    <th style="padding: 10px; border: 1px solid #ddd; text-align: left;">Date/Time</th>
+                </tr>
+            </thead>
+            <tbody>
+    """
+    
+    for record in sorted(student_records, key=lambda x: x['timestamp'], reverse=True)[:20]:
+        html += f"""
+            <tr>
+                <td style="padding: 8px; border: 1px solid #ddd;">{record['student_name']}</td>
+                <td style="padding: 8px; border: 1px solid #ddd;">{record['student_email']}</td>
+                <td style="padding: 8px; border: 1px solid #ddd;">{record['quiz_title']}</td>
+                <td style="padding: 8px; border: 1px solid #ddd; text-align: center;">
+                    <strong>{record['score']}/{record['total_questions']}</strong> ({record['percentage']}%)
+                </td>
+                <td style="padding: 8px; border: 1px solid #ddd;">{record['timestamp']}</td>
+            </tr>
+        """
+    
+    html += """
+            </tbody>
+        </table>
+    </div>
+    <p><em>Showing latest 20 records</em></p>
+    """
+    
+    return html
+
+# Timer functionality
+def initialize_timer(quiz_id):
+    """Initialize timer for quiz"""
+    if quiz_id in quizzes_dict:
+        duration_minutes = quizzes_dict[quiz_id].get('duration_minutes', len(quizzes_dict[quiz_id]['questions']))
+        st.session_state.quiz_start_time = time.time()
+        st.session_state.quiz_duration = duration_minutes * 60
+        st.session_state.quiz_id = quiz_id
+        st.session_state.quiz_active = True
+
+def get_remaining_time():
+    """Calculate remaining time for active quiz"""
+    if ('quiz_active' in st.session_state and st.session_state.quiz_active and 
+        'quiz_start_time' in st.session_state and 'quiz_duration' in st.session_state):
+        elapsed = time.time() - st.session_state.quiz_start_time
+        remaining = max(0, st.session_state.quiz_duration - elapsed)
+        return remaining
+    return 0
+
+def check_timer_expired():
+    """Check if timer has expired and auto-submit if needed"""
+    if ('quiz_active' in st.session_state and st.session_state.quiz_active and
+        'quiz_start_time' in st.session_state and 'quiz_duration' in st.session_state):
+        elapsed = time.time() - st.session_state.quiz_start_time
+        if elapsed >= st.session_state.quiz_duration:
+            st.session_state.quiz_active = False
+            st.session_state.auto_submit = True
+            return True
+    return False
+
+# Initialize session state
+if 'authenticated' not in st.session_state:
+    st.session_state.authenticated = False
+if 'quiz_active' not in st.session_state:
+    st.session_state.quiz_active = False
+if 'auto_submit' not in st.session_state:
+    st.session_state.auto_submit = False
+if 'current_quiz_id' not in st.session_state:
+    st.session_state.current_quiz_id = None
+if 'student_answers' not in st.session_state:
+    st.session_state.student_answers = {}
+
+# Load data
+load_data()
+
+# Main application
+st.set_page_config(
+    page_title="Digital Pakistan Quiz Management System",
+    page_icon="🎯",
+    layout="wide"
+)
+
+# Custom CSS
+st.markdown("""
+<style>
+    .main-header {
+        text-align: center;
+        color: #1f77b4;
+        padding: 20px;
+    }
+    .timer-container {
+        position: fixed;
+        top: 20px;
+        right: 20px;
+        z-index: 9999;
+        background: #4CAF50;
+        color: white;
+        padding: 15px;
+        border-radius: 10px;
+        text-align: center;
+        box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+        border: 2px solid #45a049;
+        font-family: Arial, sans-serif;
+        min-width: 140px;
+    }
+    .timer-warning {
+        background: #FF9800 !important;
+        border-color: #ffb74d !important;
+    }
+    .timer-danger {
+        background: #ff4444 !important;
+        border-color: #ff6b6b !important;
+    }
+    .quiz-container {
+        border: 2px solid #2196F3;
+        border-radius: 10px;
+        padding: 20px;
+        margin: 10px 0;
+        background: #f0f8ff;
+    }
+</style>
+""", unsafe_allow_html=True)
+
+# Header
+st.markdown("""
+<div class="main-header">
+    <h1>🎯 Digital Pakistan Quiz Management System</h1>
+    <p><strong>Teacher Panel:</strong> Upload quiz documents and set correct answers<br>
+    <strong>Student Panel:</strong> Take quizzes and view results</p>
+</div>
+""", unsafe_allow_html=True)
+
+# Timer display
+if st.session_state.quiz_active:
+    remaining_time = get_remaining_time()
+    minutes = int(remaining_time // 60)
+    seconds = int(remaining_time % 60)
+    
+    # Determine timer color
+    timer_class = ""
+    if remaining_time < 60:
+        timer_class = "timer-danger"
+    elif remaining_time < st.session_state.quiz_duration // 2:
+        timer_class = "timer-warning"
+    
+    timer_html = f"""
+    <div class="timer-container {timer_class}">
+        <div style="font-size: 14px; font-weight: bold; margin-bottom: 5px;">⏰ QUIZ TIMER</div>
+        <div style="font-size: 18px; font-weight: bold; font-family: 'Courier New', monospace; margin-bottom: 3px;">
+            {minutes:02d}:{seconds:02d}
+        </div>
+        <div style="font-size: 11px; opacity: 0.9;">
+            {st.session_state.quiz_duration // 60} minute quiz
+        </div>
+    </div>
+    """
+    st.markdown(timer_html, unsafe_allow_html=True)
+    
+    # Check if timer expired
+    if check_timer_expired():
+        st.warning("⏰ Time's up! Your quiz has been auto-submitted.")
+        st.rerun()
+
+# Create tabs
+tab1, tab2 = st.tabs(["🎓 Student Panel", "👨‍🏫 Teacher Admin Panel"])
+
+# Student Panel
+with tab1:
+    st.header("🎓 Student Panel")
+    
+    if st.button("🔄 Refresh Quiz List"):
+        st.rerun()
+    
+    student_choices = get_student_quiz_choices()
+    
+    if not student_choices or student_choices[0][0] == "":
+        st.warning("❌ No quizzes available. The teacher must enable quizzes and set correct answers first.")
+    else:
+        col1, col2 = st.columns(2)
+        with col1:
+            student_name = st.text_input("Your Name", placeholder="Enter your full name")
+        with col2:
+            student_email = st.text_input("Your Email", placeholder="Enter your email address")
+        
+        selected_quiz_option = st.selectbox(
+            "Select Quiz to Take",
+            options=[choice[0] for choice in student_choices],
+            format_func=lambda x: dict(student_choices)[x]
+        )
+        
+        if st.button("Start Quiz", type="primary"):
+            if not student_name.strip() or not student_email.strip():
+                st.error("❌ Please enter your name and email.")
+            else:
+                initialize_timer(selected_quiz_option)
+                st.session_state.current_quiz_id = selected_quiz_option
+                st.session_state.student_name = student_name
+                st.session_state.student_email = student_email
+                st.session_state.student_answers = {}
+                st.rerun()
+        
+        # Display active quiz
+        if st.session_state.quiz_active and st.session_state.current_quiz_id == selected_quiz_option:
+            quiz = quizzes_dict[st.session_state.current_quiz_id]
+            questions = quiz['questions']
+            
+            st.markdown(f"""
+            <div class="quiz-container">
+                <h3>📝 Taking Quiz: {quiz['title']}</h3>
+                <p><strong>Total Questions:</strong> {len(questions)} | <strong>Time Allowed:</strong> {quiz.get('duration_minutes', len(questions))} minutes</p>
+                <p><em>Select your answer for each question below. Timer is visible in the top-right corner.</em></p>
+            </div>
+            """, unsafe_allow_html=True)
+            
+            # Display questions
+            for i, question in enumerate(questions):
+                st.subheader(f"Question {i+1}: {question['question_text']}")
+                
+                # Create options
+                options = []
+                for j, option in enumerate(question['options']):
+                    if option.strip():
+                        options.append(f"{chr(65+j)}: {option}")
+                
+                # Use radio buttons for answers
+                answer_key = f"q_{i}"
+                if answer_key not in st.session_state.student_answers:
+                    st.session_state.student_answers[answer_key] = None
+                
+                selected_option = st.radio(
+                    f"Select your answer for Question {i+1}:",
+                    options=range(len(options)) if options else [],
+                    format_func=lambda x: options[x] if x < len(options) else "Invalid",
+                    key=answer_key,
+                    index=st.session_state.student_answers[answer_key] if st.session_state.student_answers[answer_key] is not None else 0
+                )
+                
+                st.session_state.student_answers[answer_key] = selected_option
+                st.divider()
+            
+            # Submit button
+            if st.button("Submit Quiz", type="primary"):
+                # Collect all answers
+                answers = []
+                for i in range(len(questions)):
+                    answer_key = f"q_{i}"
+                    answers.append(st.session_state.student_answers.get(answer_key))
+                
+                # Submit quiz
+                result = submit_student_quiz(
+                    st.session_state.current_quiz_id,
+                    st.session_state.student_name,
+                    st.session_state.student_email,
+                    answers
+                )
+                
+                # Reset quiz state
+                st.session_state.quiz_active = False
+                st.session_state.auto_submit = False
+                st.session_state.current_quiz_id = None
+                st.session_state.student_answers = {}
+                
+                # Show result
+                st.markdown(result, unsafe_allow_html=True)
+                st.rerun()
+        
+        # Handle auto-submit
+        if st.session_state.auto_submit:
+            st.warning("⏰ Time's up! Your quiz has been auto-submitted.")
+            # Collect all answers
+            answers = []
+            if st.session_state.current_quiz_id in quizzes_dict:
+                questions = quizzes_dict[st.session_state.current_quiz_id]['questions']
+                for i in range(len(questions)):
+                    answer_key = f"q_{i}"
+                    answers.append(st.session_state.student_answers.get(answer_key))
+                
+                # Submit quiz
+                result = submit_student_quiz(
+                    st.session_state.current_quiz_id,
+                    st.session_state.student_name,
+                    st.session_state.student_email,
+                    answers
+                )
+                
+                # Reset state
+                st.session_state.quiz_active = False
+                st.session_state.auto_submit = False
+                st.session_state.current_quiz_id = None
+                st.session_state.student_answers = {}
+                
+                st.markdown(result, unsafe_allow_html=True)
+                st.rerun()
+
+# Teacher Panel
+with tab2:
+    st.header("👨‍🏫 Teacher Admin Panel")
+    
+    # Login section
+    if not st.session_state.authenticated:
+        st.subheader("🔐 Teacher/Admin Login")
+        col1, col2 = st.columns(2)
+        with col1:
+            username = st.text_input("Username", placeholder="Enter username")
+        with col2:
+            password = st.text_input("Password", type="password", placeholder="Enter password")
+        
+        if st.button("Login", type="primary"):
+            success, message = authenticate_user(username, password)
+            if success:
+                st.session_state.authenticated = True
+                st.success(message)
+                st.rerun()
+            else:
+                st.error(message)
+    else:
+        st.success("✅ Logged in as Admin")
+        
+        # Upload section
+        st.subheader("📤 Upload Quiz Document")
+        uploaded_file = st.file_uploader("Upload PDF or DOCX file with MCQs", type=["pdf", "docx"])
+        generate_mcqs = st.checkbox("🤖 Generate MCQs from descriptive text (for articles/descriptive documents)")
+        
+        if st.button("Upload and Parse Quiz", type="primary"):
+            if uploaded_file is not None:
+                result = parse_document(uploaded_file, generate_mcqs)
+                if result.startswith("✅"):
+                    st.success(result)
+                else:
+                    st.error(result)
+            else:
+                st.error("Please select a file to upload.")
+        
+        # Edit quizzes section
+        st.subheader("✏️ Set Correct Answers")
+        if quizzes_dict:
+            quiz_options = []
+            for quiz_id, quiz_data in quizzes_dict.items():
+                total_questions = len(quiz_data['questions'])
+                correct_set = sum(1 for q in quiz_data['questions'] if q['correct_answer'] is not None)
+                status = "✅" if correct_set == total_questions else "⚠️"
+                enabled_status = "🟢" if quiz_data['enabled'] else "🔴"
+                auto_gen = "🤖" if quiz_data.get('auto_generated', False) else "📝"
+                duration = quiz_data.get('duration_minutes', total_questions)
+                quiz_options.append((quiz_id, f"{enabled_status} {auto_gen} {status} {quiz_data['title']} ({correct_set}/{total_questions}) - {duration}min"))
+            
+            selected_quiz_id = st.selectbox(
+                "Select Quiz to Edit",
+                options=[option[0] for option in quiz_options],
+                format_func=lambda x: dict(quiz_options)[x]
+            )
+            
+            if selected_quiz_id:
+                quiz = quizzes_dict[selected_quiz_id]
+                questions = quiz['questions']
+                
+                st.markdown(f"""
+                <div style="padding: 15px; border: 2px solid #4CAF50; border-radius: 10px; background: #f9fff9; margin-bottom: 20px;">
+                    <h4>🎯 Setting Correct Answers: {quiz['title']}</h4>
+                    <p><strong>Total Questions:</strong> {len(questions)} | <strong>Duration:</strong> {quiz.get('duration_minutes', len(questions))} minutes</p>
+                </div>
+                """, unsafe_allow_html=True)
+                
+                # Display questions for setting correct answers
+                saved_answers = []
+                for i, question in enumerate(questions):
+                    st.subheader(f"Question {i+1}: {question['question_text']}")
+                    if question.get('auto_generated', False):
+                        st.info("🤖 This question was auto-generated")
+                    
+                    # Create options
+                    options = []
+                    for j, option in enumerate(question['options']):
+                        if option.strip():
+                            options.append(f"{chr(65+j)}: {option}")
+                    
+                    # Current correct answer
+                    current_answer = question['correct_answer']
+                    
+                    # Radio button for correct answer
+                    correct_answer = st.radio(
+                        f"Select correct answer for Question {i+1}",
+                        options=range(len(options)) if options else [],
+                        format_func=lambda x: options[x] if x < len(options) else "Invalid",
+                        index=current_answer if current_answer is not None and current_answer < len(options) else 0,
+                        key=f"teacher_{selected_quiz_id}_{i}"
+                    )
+                    
+                    saved_answers.append(correct_answer)
+                    st.divider()
+                
+                # Save all answers button
+                if st.button("💾 Save All Answers", type="primary"):
+                    for i, question in enumerate(questions):
+                        if i < len(saved_answers):
+                            question['correct_answer'] = saved_answers[i]
+                    
+                    save_quizzes()
+                    st.success(f"✅ Saved all {len(questions)} answers successfully!")
+                    st.rerun()
+        
+        # Enable/disable quizzes
+        st.subheader("🎯 Enable/Disable Quizzes")
+        if quizzes_dict:
+            enable_quiz_options = []
+            for quiz_id, quiz_data in quizzes_dict.items():
+                total_questions = len(quiz_data['questions'])
+                correct_set = sum(1 for q in quiz_data['questions'] if q['correct_answer'] is not None)
+                status = "✅ Ready" if correct_set == total_questions else f"⚠️ {correct_set}/{total_questions} answers set"
+                enable_quiz_options.append((quiz_id, f"{quiz_data['title']} - {status}"))
+            
+            selected_enable_quiz = st.selectbox(
+                "Select Quiz to Toggle",
+                options=[option[0] for option in enable_quiz_options],
+                format_func=lambda x: dict(enable_quiz_options)[x]
+            )
+            
+            if selected_enable_quiz:
+                current_status = quizzes_dict[selected_enable_quiz]['enabled']
+                status_text = "🟢 ENABLED" if current_status else "🔴 DISABLED"
+                st.write(f"Current status: **{status_text}**")
+                
+                if st.button("🔄 Toggle Quiz Status"):
+                    result = toggle_quiz_enabled(selected_enable_quiz)
+                    if result.startswith("✅"):
+                        st.success(result)
+                        st.rerun()
+                    else:
+                        st.error(result)
+        
+        # Student records section
+        st.subheader("📊 Student Results")
+        
+        if student_records:
+            st.markdown(get_student_records_display(), unsafe_allow_html=True)
+            
+            if st.button("📥 Download Excel Report"):
+                excel_data, filename = generate_student_report()
+                if excel_data:
+                    st.download_button(
+                        label="⬇️ Click to Download Student Results",
+                        data=excel_data,
+                        file_name=filename,
+                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                    )
+        else:
+            st.info("ℹ️ No student records yet. Students need to complete quizzes first.")
+        
+        # Logout button
+        if st.button("🚪 Logout"):
+            st.session_state.authenticated = False
+            st.rerun()
+
+# Footer
+st.markdown("---")
+st.markdown("""
+<div style="text-align: center; color: #666; font-size: 12px;">
+    <p>🎯 Digital Pakistan Quiz Management System | Built with Streamlit</p>
+</div>
+""", unsafe_allow_html=True)
