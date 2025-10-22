@@ -451,6 +451,8 @@ if 'quiz_duration' not in st.session_state:
     st.session_state.quiz_duration = None
 if 'time_expired' not in st.session_state:
     st.session_state.time_expired = False
+if 'auto_submitted' not in st.session_state:
+    st.session_state.auto_submitted = False
 
 # Load data
 load_data()
@@ -470,11 +472,14 @@ st.markdown("""
         color: #1f77b4;
         padding: 20px;
     }
-    .timer-container {
+    .timer-wrapper {
         position: fixed;
         top: 20px;
         right: 20px;
         z-index: 9999;
+        text-align: center;
+    }
+    .timer-container {
         background: #4CAF50;
         color: white;
         padding: 15px;
@@ -484,6 +489,7 @@ st.markdown("""
         border: 2px solid #45a049;
         font-family: Arial, sans-serif;
         min-width: 140px;
+        margin-bottom: 10px;
     }
     .timer-warning {
         background: #FF9800 !important;
@@ -529,6 +535,52 @@ st.markdown("""
 </div>
 """, unsafe_allow_html=True)
 
+# Auto-submit logic
+if st.session_state.quiz_active and st.session_state.quiz_start_time and st.session_state.quiz_duration:
+    current_time = time.time()
+    elapsed_time = current_time - st.session_state.quiz_start_time
+    remaining_time = max(0, st.session_state.quiz_duration - elapsed_time)
+    
+    # Check if time expired and auto-submit
+    if remaining_time <= 0 and not st.session_state.auto_submitted:
+        st.session_state.time_expired = True
+        st.session_state.auto_submitted = True
+        st.rerun()
+
+# Handle auto-submission
+if st.session_state.auto_submitted and st.session_state.quiz_active:
+    # Collect all answers
+    answers = []
+    if st.session_state.current_quiz_id in quizzes_dict:
+        questions = quizzes_dict[st.session_state.current_quiz_id]['questions']
+        for i in range(len(questions)):
+            answer_key = f"q_{i}"
+            answers.append(st.session_state.student_answers.get(answer_key))
+        
+        # Submit quiz
+        result = submit_student_quiz(
+            st.session_state.current_quiz_id,
+            st.session_state.current_student_name,
+            st.session_state.current_student_email,
+            answers
+        )
+        
+        # Reset state
+        st.session_state.quiz_active = False
+        st.session_state.current_quiz_id = None
+        st.session_state.student_answers = {}
+        st.session_state.current_student_name = ""
+        st.session_state.current_student_email = ""
+        st.session_state.quiz_start_time = None
+        st.session_state.quiz_duration = None
+        st.session_state.time_expired = False
+        st.session_state.auto_submitted = False
+        
+        # Show result
+        st.success("⏰ Time's up! Your quiz has been auto-submitted.")
+        st.markdown(result, unsafe_allow_html=True)
+        st.rerun()
+
 # Create tabs
 tab1, tab2 = st.tabs(["🎓 Student Panel", "👨‍🏫 Teacher Admin Panel"])
 
@@ -571,6 +623,7 @@ with tab1:
                     quiz = quizzes_dict[selected_quiz_option]
                     st.session_state.quiz_duration = quiz.get('duration_minutes', len(quiz['questions'])) * 60
                 st.session_state.time_expired = False
+                st.session_state.auto_submitted = False
                 st.rerun()
         
         # Display active quiz
@@ -587,11 +640,6 @@ with tab1:
                 minutes = int(remaining_time // 60)
                 seconds = int(remaining_time % 60)
                 
-                # Check if time expired
-                if remaining_time <= 0 and not st.session_state.time_expired:
-                    st.session_state.time_expired = True
-                    st.rerun()
-                
                 # Determine timer color
                 timer_class = ""
                 if remaining_time < 60:
@@ -599,35 +647,30 @@ with tab1:
                 elif remaining_time < st.session_state.quiz_duration // 2:
                     timer_class = "timer-warning"
                 
-                # Display timer
+                # Display timer with update button below it
                 st.markdown(f"""
-                <div class="timer-container {timer_class}">
-                    <div style="font-size: 14px; font-weight: bold; margin-bottom: 5px;">⏰ QUIZ TIMER</div>
-                    <div style="font-size: 18px; font-weight: bold; font-family: 'Courier New', monospace; margin-bottom: 3px;">
-                        {minutes:02d}:{seconds:02d}
-                    </div>
-                    <div style="font-size: 11px; opacity: 0.9;">
-                        {duration_minutes} minute quiz
+                <div class="timer-wrapper">
+                    <div class="timer-container {timer_class}">
+                        <div style="font-size: 14px; font-weight: bold; margin-bottom: 5px;">⏰ QUIZ TIMER</div>
+                        <div style="font-size: 18px; font-weight: bold; font-family: 'Courier New', monospace; margin-bottom: 3px;">
+                            {minutes:02d}:{seconds:02d}
+                        </div>
+                        <div style="font-size: 11px; opacity: 0.9;">
+                            {duration_minutes} minute quiz
+                        </div>
                     </div>
                 </div>
                 """, unsafe_allow_html=True)
-            
-            # Refresh instructions
-            st.markdown("""
-            <div class="refresh-warning">
-                🔄 <strong>Timer Update:</strong> Click the "Update Timer" button below to refresh the timer display
-            </div>
-            """, unsafe_allow_html=True)
-            
-            # Update timer button
-            if st.button("🔄 Update Timer", key="update_timer_btn"):
-                st.rerun()
+                
+                # Update timer button positioned below the timer
+                if st.button("🔄 Update Timer", key="update_timer_btn"):
+                    st.rerun()
             
             # Time expired warning
             if st.session_state.time_expired:
                 st.markdown("""
                 <div class="time-expired-warning">
-                    ⚠️ <strong>TIME'S UP!</strong> Please submit your quiz immediately.
+                    ⚠️ <strong>TIME'S UP!</strong> Your quiz will be auto-submitted...
                 </div>
                 """, unsafe_allow_html=True)
             
@@ -635,7 +678,7 @@ with tab1:
             <div class="quiz-container">
                 <h3>📝 Taking Quiz: {quiz['title']}</h3>
                 <p><strong>Total Questions:</strong> {len(questions)} | <strong>Time Allowed:</strong> {duration_minutes} minutes</p>
-                <p><em>Select your answer for each question below. Click "Update Timer" to refresh the timer display.</em></p>
+                <p><em>Select your answer for each question below. Timer updates when you select answers or click "Update Timer".</em></p>
             </div>
             """, unsafe_allow_html=True)
             
@@ -692,6 +735,7 @@ with tab1:
                     st.session_state.quiz_start_time = None
                     st.session_state.quiz_duration = None
                     st.session_state.time_expired = False
+                    st.session_state.auto_submitted = False
                     
                     # Show result
                     st.markdown(result, unsafe_allow_html=True)
