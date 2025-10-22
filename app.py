@@ -393,48 +393,6 @@ def generate_student_report():
     
     return output, filename
 
-def get_student_records_display():
-    """Get formatted display of student records"""
-    if not student_records:
-        return "No student records yet."
-    
-    html = """
-    <div style="max-height: 400px; overflow-y: auto;">
-        <table style="width: 100%; border-collapse: collapse;">
-            <thead>
-                <tr style="background: #f5f5f5;">
-                    <th style="padding: 10px; border: 1px solid #ddd; text-align: left;">Name</th>
-                    <th style="padding: 10px; border: 1px solid #ddd; text-align: left;">Email</th>
-                    <th style="padding: 10px; border: 1px solid #ddd; text-align: left;">Quiz</th>
-                    <th style="padding: 10px; border: 1px solid #ddd; text-align: center;">Score</th>
-                    <th style="padding: 10px; border: 1px solid #ddd; text-align: left;">Date/Time</th>
-                </tr>
-            </thead>
-            <tbody>
-    """
-    
-    for record in sorted(student_records, key=lambda x: x['timestamp'], reverse=True)[:20]:
-        html += f"""
-            <tr>
-                <td style="padding: 8px; border: 1px solid #ddd;">{record['student_name']}</td>
-                <td style="padding: 8px; border: 1px solid #ddd;">{record['student_email']}</td>
-                <td style="padding: 8px; border: 1px solid #ddd;">{record['quiz_title']}</td>
-                <td style="padding: 8px; border: 1px solid #ddd; text-align: center;">
-                    <strong>{record['score']}/{record['total_questions']}</strong> ({record['percentage']}%)
-                </td>
-                <td style="padding: 8px; border: 1px solid #ddd;">{record['timestamp']}</td>
-            </tr>
-        """
-    
-    html += """
-            </tbody>
-        </table>
-    </div>
-    <p><em>Showing latest 20 records</em></p>
-    """
-    
-    return html
-
 # Initialize session state
 if 'authenticated' not in st.session_state:
     st.session_state.authenticated = False
@@ -682,7 +640,7 @@ with tab1:
                     elif remaining_time < st.session_state.quiz_duration // 2:
                         timer_class = "timer-warning"
                     
-                    # Display timer in a fixed position wrapper WITH refresh button
+                    # Display timer AND refresh button in a fixed position wrapper
                     timer_html = f"""
                     <div class="timer-wrapper">
                         <div class="timer-container {timer_class}">
@@ -694,18 +652,22 @@ with tab1:
                                 {duration_minutes} minute quiz
                             </div>
                         </div>
+                        <div style="text-align: center;">
+                            <button onclick="window.location.reload()" style="
+                                background: #2196F3;
+                                color: white;
+                                border: none;
+                                padding: 8px 12px;
+                                border-radius: 5px;
+                                cursor: pointer;
+                                font-size: 12px;
+                                width: 100%;
+                                margin-top: 5px;
+                            ">🔄 Update Timer</button>
+                        </div>
                     </div>
                     """
                     st.markdown(timer_html, unsafe_allow_html=True)
-                    
-                    # Add refresh button BELOW the timer in the fixed wrapper
-                    # We'll use a container to position it
-                    with st.container():
-                        # Create columns to center the button
-                        col1, col2, col3 = st.columns([1, 2, 1])
-                        with col2:
-                            if st.button("🔄 Update Timer", key="update_timer_btn", use_container_width=True):
-                                st.rerun()
                 
                 # Time expired warning
                 if st.session_state.time_expired:
@@ -917,11 +879,11 @@ with tab2:
                     else:
                         st.error(result)
         
-        # Student records section - FIXED
+        # Student records section - FIXED: Removed detailed view
         st.subheader("📊 Student Results")
         
         if student_records:
-            # Display student records using st.dataframe for better compatibility
+            # Display student records using st.dataframe only
             st.write(f"**Total Records:** {len(student_records)}")
             
             # Create a clean dataframe for display
@@ -938,10 +900,7 @@ with tab2:
             df_display = pd.DataFrame(display_data)
             st.dataframe(df_display, use_container_width=True)
             
-            # Also show the HTML version as an option
-            st.markdown("**Detailed View:**")
-            records_html = get_student_records_display()
-            st.markdown(records_html, unsafe_allow_html=True)
+            st.write(f"*Showing latest 20 of {len(student_records)} records*")
             
             # Download button
             if st.button("📥 Download Excel Report", key="download_btn"):
