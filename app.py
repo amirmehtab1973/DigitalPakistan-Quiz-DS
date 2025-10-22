@@ -322,25 +322,10 @@ def submit_student_quiz(quiz_id, student_name, student_email, answers):
     # Calculate score
     score = 0
     total = len(questions)
-    detailed_results = []
     
     for i, question in enumerate(questions):
-        student_answer = answers[i] if i < len(answers) else None
-        correct_answer_index = question['correct_answer']
-        
-        is_correct = False
-        if student_answer is not None and correct_answer_index is not None:
-            is_correct = (student_answer == correct_answer_index)
-        
-        if is_correct:
+        if i < len(answers) and answers[i] is not None and answers[i] == question['correct_answer']:
             score += 1
-        
-        detailed_results.append({
-            'question': question['question_text'],
-            'student_answer': f"{chr(65 + student_answer)}: {question['options'][student_answer]}" if student_answer is not None else "Not answered",
-            'correct_answer': f"{chr(65 + correct_answer_index)}: {question['options'][correct_answer_index]}" if correct_answer_index is not None else "Not set",
-            'is_correct': is_correct
-        })
     
     # Store student record
     record = {
@@ -352,8 +337,7 @@ def submit_student_quiz(quiz_id, student_name, student_email, answers):
         'timestamp': datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
         'score': score,
         'total_questions': total,
-        'percentage': round((score / total) * 100, 2),
-        'detailed_results': detailed_results
+        'percentage': round((score / total) * 100, 2) if total > 0 else 0
     }
     
     student_records.append(record)
@@ -457,6 +441,7 @@ def initialize_timer(quiz_id):
         st.session_state.quiz_duration = duration_minutes * 60
         st.session_state.quiz_id = quiz_id
         st.session_state.quiz_active = True
+        st.session_state.last_update = time.time()
 
 def get_remaining_time():
     """Calculate remaining time for active quiz"""
@@ -489,6 +474,8 @@ if 'current_quiz_id' not in st.session_state:
     st.session_state.current_quiz_id = None
 if 'student_answers' not in st.session_state:
     st.session_state.student_answers = {}
+if 'last_update' not in st.session_state:
+    st.session_state.last_update = 0
 
 # Load data
 load_data()
@@ -550,7 +537,15 @@ st.markdown("""
 </div>
 """, unsafe_allow_html=True)
 
-# Timer display
+# Auto-refresh for timer
+if st.session_state.quiz_active:
+    # Check if we need to refresh (every 1 second)
+    current_time = time.time()
+    if current_time - st.session_state.last_update >= 1:
+        st.session_state.last_update = current_time
+        st.rerun()
+
+# Timer display and auto-submit logic
 if st.session_state.quiz_active:
     remaining_time = get_remaining_time()
     minutes = int(remaining_time // 60)
@@ -578,7 +573,36 @@ if st.session_state.quiz_active:
     
     # Check if timer expired
     if check_timer_expired():
-        st.warning("⏰ Time's up! Your quiz has been auto-submitted.")
+        st.session_state.quiz_active = False
+        st.session_state.auto_submit = True
+        st.rerun()
+
+# Handle auto-submit
+if st.session_state.auto_submit:
+    st.warning("⏰ Time's up! Your quiz has been auto-submitted.")
+    # Collect all answers
+    answers = []
+    if st.session_state.current_quiz_id in quizzes_dict:
+        questions = quizzes_dict[st.session_state.current_quiz_id]['questions']
+        for i in range(len(questions)):
+            answer_key = f"q_{i}"
+            answers.append(st.session_state.student_answers.get(answer_key))
+        
+        # Submit quiz
+        result = submit_student_quiz(
+            st.session_state.current_quiz_id,
+            st.session_state.student_name,
+            st.session_state.student_email,
+            answers
+        )
+        
+        # Reset state
+        st.session_state.quiz_active = False
+        st.session_state.auto_submit = False
+        st.session_state.current_quiz_id = None
+        st.session_state.student_answers = {}
+        
+        st.markdown(result, unsafe_allow_html=True)
         st.rerun()
 
 # Create tabs
@@ -598,17 +622,18 @@ with tab1:
     else:
         col1, col2 = st.columns(2)
         with col1:
-            student_name = st.text_input("Your Name", placeholder="Enter your full name")
+            student_name = st.text_input("Your Name", placeholder="Enter your full name", key="student_name")
         with col2:
-            student_email = st.text_input("Your Email", placeholder="Enter your email address")
+            student_email = st.text_input("Your Email", placeholder="Enter your email address", key="student_email")
         
         selected_quiz_option = st.selectbox(
             "Select Quiz to Take",
             options=[choice[0] for choice in student_choices],
-            format_func=lambda x: dict(student_choices)[x]
+            format_func=lambda x: dict(student_choices)[x],
+            key="student_quiz_select"
         )
         
-        if st.button("Start Quiz", type="primary"):
+        if st.button("Start Quiz", type="primary", key="start_quiz_btn"):
             if not student_name.strip() or not student_email.strip():
                 st.error("❌ Please enter your name and email.")
             else:
@@ -659,7 +684,7 @@ with tab1:
                 st.divider()
             
             # Submit button
-            if st.button("Submit Quiz", type="primary"):
+            if st.button("Submit Quiz", type="primary", key="submit_quiz_btn"):
                 # Collect all answers
                 answers = []
                 for i in range(len(questions)):
@@ -683,34 +708,6 @@ with tab1:
                 # Show result
                 st.markdown(result, unsafe_allow_html=True)
                 st.rerun()
-        
-        # Handle auto-submit
-        if st.session_state.auto_submit:
-            st.warning("⏰ Time's up! Your quiz has been auto-submitted.")
-            # Collect all answers
-            answers = []
-            if st.session_state.current_quiz_id in quizzes_dict:
-                questions = quizzes_dict[st.session_state.current_quiz_id]['questions']
-                for i in range(len(questions)):
-                    answer_key = f"q_{i}"
-                    answers.append(st.session_state.student_answers.get(answer_key))
-                
-                # Submit quiz
-                result = submit_student_quiz(
-                    st.session_state.current_quiz_id,
-                    st.session_state.student_name,
-                    st.session_state.student_email,
-                    answers
-                )
-                
-                # Reset state
-                st.session_state.quiz_active = False
-                st.session_state.auto_submit = False
-                st.session_state.current_quiz_id = None
-                st.session_state.student_answers = {}
-                
-                st.markdown(result, unsafe_allow_html=True)
-                st.rerun()
 
 # Teacher Panel
 with tab2:
@@ -721,11 +718,11 @@ with tab2:
         st.subheader("🔐 Teacher/Admin Login")
         col1, col2 = st.columns(2)
         with col1:
-            username = st.text_input("Username", placeholder="Enter username")
+            username = st.text_input("Username", placeholder="Enter username", key="teacher_username")
         with col2:
-            password = st.text_input("Password", type="password", placeholder="Enter password")
+            password = st.text_input("Password", type="password", placeholder="Enter password", key="teacher_password")
         
-        if st.button("Login", type="primary"):
+        if st.button("Login", type="primary", key="login_btn"):
             success, message = authenticate_user(username, password)
             if success:
                 st.session_state.authenticated = True
@@ -738,10 +735,10 @@ with tab2:
         
         # Upload section
         st.subheader("📤 Upload Quiz Document")
-        uploaded_file = st.file_uploader("Upload PDF or DOCX file with MCQs", type=["pdf", "docx"])
-        generate_mcqs = st.checkbox("🤖 Generate MCQs from descriptive text (for articles/descriptive documents)")
+        uploaded_file = st.file_uploader("Upload PDF or DOCX file with MCQs", type=["pdf", "docx"], key="file_uploader")
+        generate_mcqs = st.checkbox("🤖 Generate MCQs from descriptive text (for articles/descriptive documents)", key="generate_mcqs_cb")
         
-        if st.button("Upload and Parse Quiz", type="primary"):
+        if st.button("Upload and Parse Quiz", type="primary", key="upload_btn"):
             if uploaded_file is not None:
                 result = parse_document(uploaded_file, generate_mcqs)
                 if result.startswith("✅"):
@@ -767,7 +764,8 @@ with tab2:
             selected_quiz_id = st.selectbox(
                 "Select Quiz to Edit",
                 options=[option[0] for option in quiz_options],
-                format_func=lambda x: dict(quiz_options)[x]
+                format_func=lambda x: dict(quiz_options)[x],
+                key="edit_quiz_select"
             )
             
             if selected_quiz_id:
@@ -810,7 +808,7 @@ with tab2:
                     st.divider()
                 
                 # Save all answers button
-                if st.button("💾 Save All Answers", type="primary"):
+                if st.button("💾 Save All Answers", type="primary", key="save_answers_btn"):
                     for i, question in enumerate(questions):
                         if i < len(saved_answers):
                             question['correct_answer'] = saved_answers[i]
@@ -832,7 +830,8 @@ with tab2:
             selected_enable_quiz = st.selectbox(
                 "Select Quiz to Toggle",
                 options=[option[0] for option in enable_quiz_options],
-                format_func=lambda x: dict(enable_quiz_options)[x]
+                format_func=lambda x: dict(enable_quiz_options)[x],
+                key="enable_quiz_select"
             )
             
             if selected_enable_quiz:
@@ -840,7 +839,7 @@ with tab2:
                 status_text = "🟢 ENABLED" if current_status else "🔴 DISABLED"
                 st.write(f"Current status: **{status_text}**")
                 
-                if st.button("🔄 Toggle Quiz Status"):
+                if st.button("🔄 Toggle Quiz Status", key="toggle_btn"):
                     result = toggle_quiz_enabled(selected_enable_quiz)
                     if result.startswith("✅"):
                         st.success(result)
@@ -854,20 +853,21 @@ with tab2:
         if student_records:
             st.markdown(get_student_records_display(), unsafe_allow_html=True)
             
-            if st.button("📥 Download Excel Report"):
+            if st.button("📥 Download Excel Report", key="download_btn"):
                 excel_data, filename = generate_student_report()
                 if excel_data:
                     st.download_button(
                         label="⬇️ Click to Download Student Results",
                         data=excel_data,
                         file_name=filename,
-                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                        key="download_report_btn"
                     )
         else:
             st.info("ℹ️ No student records yet. Students need to complete quizzes first.")
         
         # Logout button
-        if st.button("🚪 Logout"):
+        if st.button("🚪 Logout", key="logout_btn"):
             st.session_state.authenticated = False
             st.rerun()
 
