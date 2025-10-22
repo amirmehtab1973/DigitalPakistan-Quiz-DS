@@ -488,11 +488,11 @@ st.markdown("""
         z-index: 9999;
         text-align: center;
         background: white;
-        padding: 10px;
+        padding: 15px;
         border-radius: 10px;
         box-shadow: 0 4px 12px rgba(0,0,0,0.15);
         border: 2px solid #e0e0e0;
-        min-width: 160px;
+        min-width: 180px;
     }
     .timer-container {
         background: #4CAF50;
@@ -535,6 +535,10 @@ st.markdown("""
         margin: 10px 0;
         text-align: center;
         color: #721c24;
+    }
+    .refresh-button {
+        width: 100%;
+        margin-top: 5px;
     }
 </style>
 """, unsafe_allow_html=True)
@@ -678,8 +682,8 @@ with tab1:
                     elif remaining_time < st.session_state.quiz_duration // 2:
                         timer_class = "timer-warning"
                     
-                    # Display timer in a fixed position wrapper WITH the update button
-                    st.markdown(f"""
+                    # Display timer in a fixed position wrapper WITH refresh button
+                    timer_html = f"""
                     <div class="timer-wrapper">
                         <div class="timer-container {timer_class}">
                             <div style="font-size: 14px; font-weight: bold; margin-bottom: 5px;">⏰ QUIZ TIMER</div>
@@ -691,7 +695,17 @@ with tab1:
                             </div>
                         </div>
                     </div>
-                    """, unsafe_allow_html=True)
+                    """
+                    st.markdown(timer_html, unsafe_allow_html=True)
+                    
+                    # Add refresh button BELOW the timer in the fixed wrapper
+                    # We'll use a container to position it
+                    with st.container():
+                        # Create columns to center the button
+                        col1, col2, col3 = st.columns([1, 2, 1])
+                        with col2:
+                            if st.button("🔄 Update Timer", key="update_timer_btn", use_container_width=True):
+                                st.rerun()
                 
                 # Time expired warning
                 if st.session_state.time_expired:
@@ -903,19 +917,38 @@ with tab2:
                     else:
                         st.error(result)
         
-        # Student records section
+        # Student records section - FIXED
         st.subheader("📊 Student Results")
         
         if student_records:
-            # Use st.markdown with unsafe_allow_html=True to render the HTML table
+            # Display student records using st.dataframe for better compatibility
+            st.write(f"**Total Records:** {len(student_records)}")
+            
+            # Create a clean dataframe for display
+            display_data = []
+            for record in sorted(student_records, key=lambda x: x['timestamp'], reverse=True)[:20]:
+                display_data.append({
+                    'Student Name': record['student_name'],
+                    'Email': record['student_email'],
+                    'Quiz': record['quiz_title'],
+                    'Score': f"{record['score']}/{record['total_questions']} ({record['percentage']}%)",
+                    'Date/Time': record['timestamp']
+                })
+            
+            df_display = pd.DataFrame(display_data)
+            st.dataframe(df_display, use_container_width=True)
+            
+            # Also show the HTML version as an option
+            st.markdown("**Detailed View:**")
             records_html = get_student_records_display()
             st.markdown(records_html, unsafe_allow_html=True)
             
+            # Download button
             if st.button("📥 Download Excel Report", key="download_btn"):
                 excel_data, filename = generate_student_report()
-                if excel_data:
+                if excel_data and filename:
                     st.download_button(
-                        label="⬇️ Click to Download Student Results",
+                        label="⬇️ Click to Download Student Results (Excel)",
                         data=excel_data,
                         file_name=filename,
                         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
