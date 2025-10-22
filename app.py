@@ -1,6 +1,6 @@
 import streamlit as st
 import pandas as pd
-from datetime import datetime, timedelta
+from datetime import datetime
 import re
 import io
 import uuid
@@ -449,8 +449,8 @@ if 'quiz_start_time' not in st.session_state:
     st.session_state.quiz_start_time = None
 if 'quiz_duration' not in st.session_state:
     st.session_state.quiz_duration = None
-if 'last_refresh' not in st.session_state:
-    st.session_state.last_refresh = 0
+if 'time_expired' not in st.session_state:
+    st.session_state.time_expired = False
 
 # Load data
 load_data()
@@ -500,13 +500,22 @@ st.markdown("""
         margin: 10px 0;
         background: #f0f8ff;
     }
-    .auto-refresh-warning {
+    .refresh-warning {
         background: #fff3cd;
         border: 1px solid #ffeaa7;
         border-radius: 5px;
         padding: 10px;
         margin: 10px 0;
         text-align: center;
+    }
+    .time-expired-warning {
+        background: #f8d7da;
+        border: 1px solid #f5c6cb;
+        border-radius: 5px;
+        padding: 15px;
+        margin: 10px 0;
+        text-align: center;
+        color: #721c24;
     }
 </style>
 """, unsafe_allow_html=True)
@@ -519,55 +528,6 @@ st.markdown("""
     <strong>Student Panel:</strong> Take quizzes and view results</p>
 </div>
 """, unsafe_allow_html=True)
-
-# Timer and auto-refresh logic
-if st.session_state.quiz_active and st.session_state.quiz_start_time and st.session_state.quiz_duration:
-    current_time = time.time()
-    elapsed_time = current_time - st.session_state.quiz_start_time
-    remaining_time = max(0, st.session_state.quiz_duration - elapsed_time)
-    
-    # Auto-refresh every 5 seconds
-    if current_time - st.session_state.last_refresh >= 5:
-        st.session_state.last_refresh = current_time
-        st.rerun()
-    
-    # Check if time expired
-    if remaining_time <= 0:
-        st.session_state.quiz_active = False
-        st.session_state.auto_submitted = True
-        st.rerun()
-
-# Handle auto-submit
-if st.session_state.get('auto_submitted', False):
-    st.warning("⏰ Time's up! Your quiz has been auto-submitted.")
-    # Collect all answers
-    answers = []
-    if st.session_state.current_quiz_id in quizzes_dict:
-        questions = quizzes_dict[st.session_state.current_quiz_id]['questions']
-        for i in range(len(questions)):
-            answer_key = f"q_{i}"
-            answers.append(st.session_state.student_answers.get(answer_key))
-        
-        # Submit quiz
-        result = submit_student_quiz(
-            st.session_state.current_quiz_id,
-            st.session_state.current_student_name,
-            st.session_state.current_student_email,
-            answers
-        )
-        
-        # Reset state
-        st.session_state.quiz_active = False
-        st.session_state.auto_submitted = False
-        st.session_state.current_quiz_id = None
-        st.session_state.student_answers = {}
-        st.session_state.current_student_name = ""
-        st.session_state.current_student_email = ""
-        st.session_state.quiz_start_time = None
-        st.session_state.quiz_duration = None
-        
-        st.markdown(result, unsafe_allow_html=True)
-        st.rerun()
 
 # Create tabs
 tab1, tab2 = st.tabs(["🎓 Student Panel", "👨‍🏫 Teacher Admin Panel"])
@@ -610,7 +570,7 @@ with tab1:
                 if selected_quiz_option in quizzes_dict:
                     quiz = quizzes_dict[selected_quiz_option]
                     st.session_state.quiz_duration = quiz.get('duration_minutes', len(quiz['questions'])) * 60
-                st.session_state.last_refresh = time.time()
+                st.session_state.time_expired = False
                 st.rerun()
         
         # Display active quiz
@@ -626,6 +586,11 @@ with tab1:
                 remaining_time = max(0, st.session_state.quiz_duration - elapsed_time)
                 minutes = int(remaining_time // 60)
                 seconds = int(remaining_time % 60)
+                
+                # Check if time expired
+                if remaining_time <= 0 and not st.session_state.time_expired:
+                    st.session_state.time_expired = True
+                    st.rerun()
                 
                 # Determine timer color
                 timer_class = ""
@@ -647,18 +612,30 @@ with tab1:
                 </div>
                 """, unsafe_allow_html=True)
             
-            # Auto-refresh warning
+            # Refresh instructions
             st.markdown("""
-            <div class="auto-refresh-warning">
-                ⚡ <strong>Auto-refresh enabled:</strong> Page will refresh every 5 seconds to update timer
+            <div class="refresh-warning">
+                🔄 <strong>Timer Update:</strong> Click the "Update Timer" button below to refresh the timer display
             </div>
             """, unsafe_allow_html=True)
+            
+            # Update timer button
+            if st.button("🔄 Update Timer", key="update_timer_btn"):
+                st.rerun()
+            
+            # Time expired warning
+            if st.session_state.time_expired:
+                st.markdown("""
+                <div class="time-expired-warning">
+                    ⚠️ <strong>TIME'S UP!</strong> Please submit your quiz immediately.
+                </div>
+                """, unsafe_allow_html=True)
             
             st.markdown(f"""
             <div class="quiz-container">
                 <h3>📝 Taking Quiz: {quiz['title']}</h3>
                 <p><strong>Total Questions:</strong> {len(questions)} | <strong>Time Allowed:</strong> {duration_minutes} minutes</p>
-                <p><em>Select your answer for each question below. Timer is visible in the top-right corner.</em></p>
+                <p><em>Select your answer for each question below. Click "Update Timer" to refresh the timer display.</em></p>
             </div>
             """, unsafe_allow_html=True)
             
@@ -714,6 +691,7 @@ with tab1:
                     st.session_state.current_student_email = ""
                     st.session_state.quiz_start_time = None
                     st.session_state.quiz_duration = None
+                    st.session_state.time_expired = False
                     
                     # Show result
                     st.markdown(result, unsafe_allow_html=True)
