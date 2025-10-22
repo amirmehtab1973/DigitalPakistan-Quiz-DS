@@ -1,6 +1,6 @@
 import streamlit as st
 import pandas as pd
-from datetime import datetime
+from datetime import datetime, timedelta
 import re
 import io
 import uuid
@@ -432,65 +432,11 @@ def get_student_records_display():
     
     return html
 
-# JavaScript timer function
-def create_javascript_timer(duration_minutes):
-    """Create a JavaScript-based timer that auto-submits"""
-    total_seconds = duration_minutes * 60
-    
-    js_code = f"""
-    <script>
-    function startTimer() {{
-        let timeLeft = {total_seconds};
-        const timerElement = document.getElementById('quizTimer');
-        const submitButton = document.getElementById('submit-quiz-btn');
-        
-        function updateTimer() {{
-            const minutes = Math.floor(timeLeft / 60);
-            const seconds = timeLeft % 60;
-            const timeString = minutes.toString().padStart(2, '0') + ':' + seconds.toString().padStart(2, '0');
-            
-            if (timerElement) {{
-                timerElement.innerHTML = timeString;
-                
-                // Update colors
-                if (timeLeft < 60) {{
-                    timerElement.style.background = '#ff4444';
-                    timerElement.style.borderColor = '#ff6b6b';
-                }} else if (timeLeft < {total_seconds // 2}) {{
-                    timerElement.style.background = '#FF9800';
-                    timerElement.style.borderColor = '#ffb74d';
-                }}
-            }}
-            
-            if (timeLeft <= 0) {{
-                // Time's up - auto submit
-                if (submitButton) {{
-                    submitButton.click();
-                }}
-                return;
-            }}
-            
-            timeLeft--;
-            setTimeout(updateTimer, 1000);
-        }}
-        
-        updateTimer();
-    }}
-    
-    // Start timer when page loads
-    window.addEventListener('load', startTimer);
-    </script>
-    """
-    
-    return js_code
-
 # Initialize session state
 if 'authenticated' not in st.session_state:
     st.session_state.authenticated = False
 if 'quiz_active' not in st.session_state:
     st.session_state.quiz_active = False
-if 'auto_submit' not in st.session_state:
-    st.session_state.auto_submit = False
 if 'current_quiz_id' not in st.session_state:
     st.session_state.current_quiz_id = None
 if 'student_answers' not in st.session_state:
@@ -499,6 +445,12 @@ if 'current_student_name' not in st.session_state:
     st.session_state.current_student_name = ""
 if 'current_student_email' not in st.session_state:
     st.session_state.current_student_email = ""
+if 'quiz_start_time' not in st.session_state:
+    st.session_state.quiz_start_time = None
+if 'quiz_duration' not in st.session_state:
+    st.session_state.quiz_duration = None
+if 'last_refresh' not in st.session_state:
+    st.session_state.last_refresh = 0
 
 # Load data
 load_data()
@@ -548,6 +500,14 @@ st.markdown("""
         margin: 10px 0;
         background: #f0f8ff;
     }
+    .auto-refresh-warning {
+        background: #fff3cd;
+        border: 1px solid #ffeaa7;
+        border-radius: 5px;
+        padding: 10px;
+        margin: 10px 0;
+        text-align: center;
+    }
 </style>
 """, unsafe_allow_html=True)
 
@@ -559,6 +519,55 @@ st.markdown("""
     <strong>Student Panel:</strong> Take quizzes and view results</p>
 </div>
 """, unsafe_allow_html=True)
+
+# Timer and auto-refresh logic
+if st.session_state.quiz_active and st.session_state.quiz_start_time and st.session_state.quiz_duration:
+    current_time = time.time()
+    elapsed_time = current_time - st.session_state.quiz_start_time
+    remaining_time = max(0, st.session_state.quiz_duration - elapsed_time)
+    
+    # Auto-refresh every 5 seconds
+    if current_time - st.session_state.last_refresh >= 5:
+        st.session_state.last_refresh = current_time
+        st.rerun()
+    
+    # Check if time expired
+    if remaining_time <= 0:
+        st.session_state.quiz_active = False
+        st.session_state.auto_submitted = True
+        st.rerun()
+
+# Handle auto-submit
+if st.session_state.get('auto_submitted', False):
+    st.warning("⏰ Time's up! Your quiz has been auto-submitted.")
+    # Collect all answers
+    answers = []
+    if st.session_state.current_quiz_id in quizzes_dict:
+        questions = quizzes_dict[st.session_state.current_quiz_id]['questions']
+        for i in range(len(questions)):
+            answer_key = f"q_{i}"
+            answers.append(st.session_state.student_answers.get(answer_key))
+        
+        # Submit quiz
+        result = submit_student_quiz(
+            st.session_state.current_quiz_id,
+            st.session_state.current_student_name,
+            st.session_state.current_student_email,
+            answers
+        )
+        
+        # Reset state
+        st.session_state.quiz_active = False
+        st.session_state.auto_submitted = False
+        st.session_state.current_quiz_id = None
+        st.session_state.student_answers = {}
+        st.session_state.current_student_name = ""
+        st.session_state.current_student_email = ""
+        st.session_state.quiz_start_time = None
+        st.session_state.quiz_duration = None
+        
+        st.markdown(result, unsafe_allow_html=True)
+        st.rerun()
 
 # Create tabs
 tab1, tab2 = st.tabs(["🎓 Student Panel", "👨‍🏫 Teacher Admin Panel"])
@@ -597,6 +606,11 @@ with tab1:
                 st.session_state.current_student_name = student_name
                 st.session_state.current_student_email = student_email
                 st.session_state.student_answers = {}
+                st.session_state.quiz_start_time = time.time()
+                if selected_quiz_option in quizzes_dict:
+                    quiz = quizzes_dict[selected_quiz_option]
+                    st.session_state.quiz_duration = quiz.get('duration_minutes', len(quiz['questions'])) * 60
+                st.session_state.last_refresh = time.time()
                 st.rerun()
         
         # Display active quiz
@@ -605,19 +619,38 @@ with tab1:
             questions = quiz['questions']
             duration_minutes = quiz.get('duration_minutes', len(questions))
             
-            # Add JavaScript timer
-            st.markdown(create_javascript_timer(duration_minutes), unsafe_allow_html=True)
+            # Calculate remaining time
+            if st.session_state.quiz_start_time and st.session_state.quiz_duration:
+                current_time = time.time()
+                elapsed_time = current_time - st.session_state.quiz_start_time
+                remaining_time = max(0, st.session_state.quiz_duration - elapsed_time)
+                minutes = int(remaining_time // 60)
+                seconds = int(remaining_time % 60)
+                
+                # Determine timer color
+                timer_class = ""
+                if remaining_time < 60:
+                    timer_class = "timer-danger"
+                elif remaining_time < st.session_state.quiz_duration // 2:
+                    timer_class = "timer-warning"
+                
+                # Display timer
+                st.markdown(f"""
+                <div class="timer-container {timer_class}">
+                    <div style="font-size: 14px; font-weight: bold; margin-bottom: 5px;">⏰ QUIZ TIMER</div>
+                    <div style="font-size: 18px; font-weight: bold; font-family: 'Courier New', monospace; margin-bottom: 3px;">
+                        {minutes:02d}:{seconds:02d}
+                    </div>
+                    <div style="font-size: 11px; opacity: 0.9;">
+                        {duration_minutes} minute quiz
+                    </div>
+                </div>
+                """, unsafe_allow_html=True)
             
-            # Timer display (will be updated by JavaScript)
-            st.markdown(f"""
-            <div class="timer-container" id="quizTimer" style="background: #4CAF50; border-color: #45a049;">
-                <div style="font-size: 14px; font-weight: bold; margin-bottom: 5px;">⏰ QUIZ TIMER</div>
-                <div style="font-size: 18px; font-weight: bold; font-family: 'Courier New', monospace; margin-bottom: 3px;">
-                    {duration_minutes:02d}:00
-                </div>
-                <div style="font-size: 11px; opacity: 0.9;">
-                    {duration_minutes} minute quiz
-                </div>
+            # Auto-refresh warning
+            st.markdown("""
+            <div class="auto-refresh-warning">
+                ⚡ <strong>Auto-refresh enabled:</strong> Page will refresh every 5 seconds to update timer
             </div>
             """, unsafe_allow_html=True)
             
@@ -655,35 +688,38 @@ with tab1:
                 st.session_state.student_answers[answer_key] = selected_option
                 st.divider()
             
-            # Submit button with ID for JavaScript to find
-            if st.button("Submit Quiz", type="primary", key="submit-quiz-btn"):
-                # Collect all answers
-                answers = []
-                for i in range(len(questions)):
-                    answer_key = f"q_{i}"
-                    answers.append(st.session_state.student_answers.get(answer_key))
-                
-                # Submit quiz
-                result = submit_student_quiz(
-                    st.session_state.current_quiz_id,
-                    st.session_state.current_student_name,
-                    st.session_state.current_student_email,
-                    answers
-                )
-                
-                # Reset quiz state
-                st.session_state.quiz_active = False
-                st.session_state.auto_submit = False
-                st.session_state.current_quiz_id = None
-                st.session_state.student_answers = {}
-                st.session_state.current_student_name = ""
-                st.session_state.current_student_email = ""
-                
-                # Show result
-                st.markdown(result, unsafe_allow_html=True)
-                st.rerun()
+            # Submit button
+            col1, col2, col3 = st.columns([1, 2, 1])
+            with col2:
+                if st.button("Submit Quiz", type="primary", key="submit_quiz_btn", use_container_width=True):
+                    # Collect all answers
+                    answers = []
+                    for i in range(len(questions)):
+                        answer_key = f"q_{i}"
+                        answers.append(st.session_state.student_answers.get(answer_key))
+                    
+                    # Submit quiz
+                    result = submit_student_quiz(
+                        st.session_state.current_quiz_id,
+                        st.session_state.current_student_name,
+                        st.session_state.current_student_email,
+                        answers
+                    )
+                    
+                    # Reset quiz state
+                    st.session_state.quiz_active = False
+                    st.session_state.current_quiz_id = None
+                    st.session_state.student_answers = {}
+                    st.session_state.current_student_name = ""
+                    st.session_state.current_student_email = ""
+                    st.session_state.quiz_start_time = None
+                    st.session_state.quiz_duration = None
+                    
+                    # Show result
+                    st.markdown(result, unsafe_allow_html=True)
+                    st.rerun()
 
-# Teacher Panel
+# Teacher Panel (same as before)
 with tab2:
     st.header("👨‍🏫 Teacher Admin Panel")
     
