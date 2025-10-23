@@ -420,6 +420,8 @@ if 'last_refresh' not in st.session_state:
     st.session_state.last_refresh = 0
 if 'force_refresh' not in st.session_state:
     st.session_state.force_refresh = False
+if 'auto_refresh_counter' not in st.session_state:
+    st.session_state.auto_refresh_counter = 0
 
 # Load data
 load_data()
@@ -498,11 +500,16 @@ st.markdown("""
         text-align: center;
         margin-top: 10px;
     }
-    .fixed-refresh-button {
+    .fixed-refresh-area {
         position: fixed;
         top: 180px;
         right: 20px;
         z-index: 10000;
+        background: white;
+        padding: 10px;
+        border-radius: 8px;
+        box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+        border: 1px solid #e0e0e0;
     }
 </style>
 """, unsafe_allow_html=True)
@@ -623,6 +630,7 @@ with tab1:
                     st.session_state.auto_submitted = False
                     st.session_state.quiz_result = None
                     st.session_state.last_refresh = time.time()
+                    st.session_state.auto_refresh_counter = 0
                     st.rerun()
             
             # Display active quiz
@@ -658,37 +666,38 @@ with tab1:
                                 {duration_minutes} minute quiz
                             </div>
                             <div style="font-size: 10px; margin-top: 8px; color: #666;">
-                                Auto-updates every 5 seconds
+                                Updated: {datetime.now().strftime("%H:%M:%S")}
                             </div>
                         </div>
                     </div>
                     """
                     st.markdown(timer_html, unsafe_allow_html=True)
                 
-                # Create a fixed refresh button using Streamlit
-                with st.container():
-                    # Create columns to position the button
-                    col1, col2, col3, col4 = st.columns([6, 1, 1, 1])
-                    with col4:
-                        # Fixed position refresh button
-                        if st.button("🔄", key="fixed_refresh_btn", help="Refresh Timer"):
-                            st.rerun()
-                
-                # Add JavaScript to auto-refresh the page every 5 seconds
+                # Create a visible refresh button area
                 st.markdown("""
-                <script>
-                function autoRefresh() {
-                    setTimeout(function() {
-                        window.location.reload();
-                    }, 5000); // Refresh every 5 seconds
-                }
-                // Start auto-refresh only if not already running
-                if (!window.autoRefreshStarted) {
-                    window.autoRefreshStarted = true;
-                    autoRefresh();
-                }
-                </script>
+                <div class="fixed-refresh-area">
+                    <div style="text-align: center;">
+                        <p style="margin: 0 0 8px 0; font-size: 12px; font-weight: bold;">Manual Refresh</p>
+                    </div>
+                </div>
                 """, unsafe_allow_html=True)
+                
+                # Add the actual Streamlit button below the fixed area
+                col1, col2, col3, col4 = st.columns([3, 1, 1, 1])
+                with col4:
+                    if st.button("🔄 Refresh Now", key="manual_refresh_btn", use_container_width=True):
+                        st.rerun()
+                
+                # Auto-refresh logic - increment counter and force refresh every 10 seconds
+                current_counter = st.session_state.get('auto_refresh_counter', 0)
+                if current_counter >= 10:  # Refresh every 10 seconds
+                    st.session_state.auto_refresh_counter = 0
+                    st.rerun()
+                else:
+                    st.session_state.auto_refresh_counter = current_counter + 1
+                
+                # Show auto-refresh status
+                st.info(f"🔄 Auto-refresh in {10 - st.session_state.auto_refresh_counter} seconds...")
                 
                 # Time expired warning
                 if st.session_state.time_expired:
@@ -698,7 +707,7 @@ with tab1:
                 <div class="quiz-container">
                     <h3>📝 Taking Quiz: {quiz['title']}</h3>
                     <p><strong>Total Questions:</strong> {len(questions)} | <strong>Time Allowed:</strong> {duration_minutes} minutes</p>
-                    <p><em>Page auto-refreshes every 5 seconds to update timer. Use refresh button (🔄) at top-right for immediate update.</em></p>
+                    <p><em>Page auto-refreshes every 10 seconds. Use 'Refresh Now' button for immediate update.</em></p>
                 </div>
                 """, unsafe_allow_html=True)
                 
@@ -760,10 +769,11 @@ with tab1:
                         st.session_state.quiz_duration = None
                         st.session_state.time_expired = False
                         st.session_state.auto_submitted = False
+                        st.session_state.auto_refresh_counter = 0
                         
                         st.rerun()
 
-# Teacher Panel
+# Teacher Panel (same as before)
 with tab2:
     st.header("👨‍🏫 Teacher Admin Panel")
     
@@ -901,7 +911,7 @@ with tab2:
                     else:
                         st.error(result)
         
-        # Student records section - FIXED: Removed detailed view
+        # Student records section
         st.subheader("📊 Student Results")
         
         if student_records:
