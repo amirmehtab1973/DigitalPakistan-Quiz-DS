@@ -420,6 +420,8 @@ if 'last_refresh' not in st.session_state:
     st.session_state.last_refresh = 0
 if 'force_refresh' not in st.session_state:
     st.session_state.force_refresh = False
+if 'timer_container' not in st.session_state:
+    st.session_state.timer_container = None
 
 # Load data
 load_data()
@@ -431,7 +433,7 @@ st.set_page_config(
     layout="wide"
 )
 
-# Custom CSS
+# Custom CSS with improved timer positioning
 st.markdown("""
 <style>
     .main-header {
@@ -450,7 +452,7 @@ st.markdown("""
         border-radius: 10px;
         box-shadow: 0 4px 12px rgba(0,0,0,0.15);
         border: 2px solid #e0e0e0;
-        min-width: 180px;
+        min-width: 200px;
     }
     .timer-container {
         background: #4CAF50;
@@ -493,6 +495,10 @@ st.markdown("""
         margin: 10px 0;
         text-align: center;
         color: #721c24;
+    }
+    .refresh-button-container {
+        text-align: center;
+        margin-top: 10px;
     }
 </style>
 """, unsafe_allow_html=True)
@@ -636,7 +642,7 @@ with tab1:
                     elif remaining_time < st.session_state.quiz_duration // 2:
                         timer_class = "timer-warning"
                     
-                    # Display timer in fixed position
+                    # Display timer AND refresh button in fixed position
                     timer_html = f"""
                     <div class="timer-wrapper">
                         <div class="timer-container {timer_class}">
@@ -647,19 +653,35 @@ with tab1:
                             <div style="font-size: 11px; opacity: 0.9;">
                                 {duration_minutes} minute quiz
                             </div>
-                            <div style="font-size: 10px; margin-top: 8px; color: #666;">
-                                Auto-updates every second
-                            </div>
+                        </div>
+                        <div class="refresh-button-container">
+                            <button onclick="window.location.reload()" style="
+                                background: #2196F3;
+                                color: white;
+                                border: none;
+                                padding: 8px 16px;
+                                border-radius: 5px;
+                                cursor: pointer;
+                                font-size: 12px;
+                                font-weight: bold;
+                                width: 100%;
+                            ">🔄 Refresh Timer</button>
                         </div>
                     </div>
                     """
                     st.markdown(timer_html, unsafe_allow_html=True)
-                
-                # Add a manual refresh button in the main content area
-                col1, col2, col3 = st.columns([2, 1, 2])
-                with col2:
-                    if st.button("🔄 Manual Refresh Timer", key="manual_refresh_btn", use_container_width=True):
-                        st.rerun()
+                    
+                    # Add JavaScript to auto-refresh the page every 10 seconds
+                    st.markdown("""
+                    <script>
+                    function autoRefresh() {
+                        setTimeout(function() {
+                            window.location.reload();
+                        }, 10000); // Refresh every 10 seconds
+                    }
+                    autoRefresh();
+                    </script>
+                    """, unsafe_allow_html=True)
                 
                 # Time expired warning
                 if st.session_state.time_expired:
@@ -669,7 +691,7 @@ with tab1:
                 <div class="quiz-container">
                     <h3>📝 Taking Quiz: {quiz['title']}</h3>
                     <p><strong>Total Questions:</strong> {len(questions)} | <strong>Time Allowed:</strong> {duration_minutes} minutes</p>
-                    <p><em>Timer updates automatically every second. Use 'Manual Refresh' if needed.</em></p>
+                    <p><em>Page auto-refreshes every 10 seconds to update timer. Use 'Refresh Timer' button for immediate update.</em></p>
                 </div>
                 """, unsafe_allow_html=True)
                 
@@ -733,7 +755,7 @@ with tab1:
                         
                         st.rerun()
 
-# Teacher Panel
+# Teacher Panel (keep the same as before)
 with tab2:
     st.header("👨‍🏫 Teacher Admin Panel")
     
