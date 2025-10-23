@@ -420,10 +420,10 @@ if 'last_refresh' not in st.session_state:
     st.session_state.last_refresh = 0
 if 'force_refresh' not in st.session_state:
     st.session_state.force_refresh = False
-if 'auto_refresh_counter' not in st.session_state:
-    st.session_state.auto_refresh_counter = 0
 if 'last_auto_refresh' not in st.session_state:
     st.session_state.last_auto_refresh = 0
+if 'refresh_requested' not in st.session_state:
+    st.session_state.refresh_requested = False
 
 # Load data
 load_data()
@@ -498,24 +498,6 @@ st.markdown("""
         text-align: center;
         color: #721c24;
     }
-    .fixed-refresh-button {
-        position: fixed;
-        top: 180px;
-        right: 20px;
-        z-index: 10000;
-        background: #2196F3;
-        color: white;
-        border: none;
-        padding: 10px 15px;
-        border-radius: 5px;
-        cursor: pointer;
-        font-size: 14px;
-        font-weight: bold;
-        box-shadow: 0 2px 8px rgba(0,0,0,0.2);
-    }
-    .fixed-refresh-button:hover {
-        background: #1976D2;
-    }
 </style>
 """, unsafe_allow_html=True)
 
@@ -543,6 +525,19 @@ if st.session_state.quiz_active and st.session_state.quiz_start_time and st.sess
             st.session_state.time_expired = True
             st.session_state.auto_submitted = True
             st.session_state.force_refresh = True
+
+# Handle manual refresh request
+if st.session_state.refresh_requested:
+    st.session_state.refresh_requested = False
+    st.session_state.force_refresh = True
+
+# Auto-refresh logic - check if 10 seconds have passed
+current_time = time.time()
+if (st.session_state.quiz_active and 
+    st.session_state.last_auto_refresh and 
+    current_time - st.session_state.last_auto_refresh >= 10):
+    st.session_state.force_refresh = True
+    st.session_state.last_auto_refresh = current_time
 
 # Handle auto-submission
 if st.session_state.auto_submitted and st.session_state.quiz_active:
@@ -575,15 +570,8 @@ if st.session_state.auto_submitted and st.session_state.quiz_active:
         st.session_state.quiz_duration = None
         st.session_state.time_expired = False
         st.session_state.auto_submitted = False
+        st.session_state.last_auto_refresh = 0
         st.session_state.force_refresh = True
-
-# Auto-refresh logic - check if 10 seconds have passed
-current_time = time.time()
-if (st.session_state.quiz_active and 
-    st.session_state.last_auto_refresh and 
-    current_time - st.session_state.last_auto_refresh >= 10):
-    st.session_state.force_refresh = True
-    st.session_state.last_auto_refresh = current_time
 
 # Force refresh if needed
 if st.session_state.get('force_refresh', False):
@@ -671,7 +659,7 @@ with tab1:
                     time_since_refresh = current_time - st.session_state.last_auto_refresh
                     time_until_refresh = max(0, 10 - time_since_refresh)
                     
-                    # Display timer with refresh button IN THE SAME FIXED CONTAINER
+                    # Display timer
                     timer_html = f"""
                     <div class="timer-wrapper">
                         <div class="timer-container {timer_class}">
@@ -686,22 +674,16 @@ with tab1:
                                 Auto-refresh in: {int(time_until_refresh)}s
                             </div>
                         </div>
-                        <div style="text-align: center; margin-top: 10px;">
-                            <button onclick="window.location.reload()" style="
-                                background: #2196F3;
-                                color: white;
-                                border: none;
-                                padding: 8px 16px;
-                                border-radius: 5px;
-                                cursor: pointer;
-                                font-size: 12px;
-                                font-weight: bold;
-                                width: 100%;
-                            ">🔄 Refresh Now</button>
-                        </div>
                     </div>
                     """
                     st.markdown(timer_html, unsafe_allow_html=True)
+                
+                # Add a working Streamlit refresh button in the main content area
+                col1, col2, col3 = st.columns([2, 1, 2])
+                with col2:
+                    if st.button("🔄 Refresh Timer Now", key="manual_refresh_btn", type="primary", use_container_width=True):
+                        st.session_state.refresh_requested = True
+                        st.rerun()
                 
                 # Time expired warning
                 if st.session_state.time_expired:
@@ -711,7 +693,7 @@ with tab1:
                 <div class="quiz-container">
                     <h3>📝 Taking Quiz: {quiz['title']}</h3>
                     <p><strong>Total Questions:</strong> {len(questions)} | <strong>Time Allowed:</strong> {duration_minutes} minutes</p>
-                    <p><em>Page auto-refreshes every 10 seconds. Use 'Refresh Now' button in timer for immediate update.</em></p>
+                    <p><em>Page auto-refreshes every 10 seconds. Use 'Refresh Timer Now' button above for immediate update.</em></p>
                 </div>
                 """, unsafe_allow_html=True)
                 
