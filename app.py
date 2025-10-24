@@ -23,6 +23,497 @@ except ImportError:
     DOCX_SUPPORT = False
     st.warning("python-docx not installed. DOCX uploads will not work.")
 
+# NLP Libraries with error handling
+try:
+    import nltk
+    # Download required NLTK data
+    try:
+        nltk.data.find('tokenizers/punkt')
+    except LookupError:
+        nltk.download('punkt', quiet=True)
+    try:
+        nltk.data.find('corpora/stopwords')
+    except LookupError:
+        nltk.download('stopwords', quiet=True)
+    try:
+        nltk.data.find('taggers/averaged_perceptron_tagger')
+    except LookupError:
+        nltk.download('averaged_perceptron_tagger', quiet=True)
+    
+    from nltk.tokenize import sent_tokenize, word_tokenize
+    from nltk.corpus import stopwords
+    from nltk import pos_tag
+    from nltk.chunk import ne_chunk
+    from nltk.tree import Tree
+    
+    NLTK_SUPPORT = True
+except ImportError:
+    NLTK_SUPPORT = False
+    st.warning("NLTK not installed. Advanced text processing will be limited.")
+
+try:
+    import spacy
+    # Load spaCy model
+    try:
+        nlp = spacy.load("en_core_web_sm")
+        SPACY_SUPPORT = True
+    except OSError:
+        st.warning("spaCy English model not found. Please run: python -m spacy download en_core_web_sm")
+        SPACY_SUPPORT = False
+except ImportError:
+    SPACY_SUPPORT = False
+    st.warning("spaCy not installed. Advanced NLP features will not be available.")
+
+# File paths for persistence
+QUIZZES_FILE = "quizzes.json"
+STUDENT_RECORDS_FILE = "student_records.json"
+COUNTER_FILE = "counter.json"
+
+# Authentication credentials
+ADMIN_CREDENTIALS = {
+    "admin": "Admin123"
+}
+
+# Global variables to store data
+quizzes_dict = {}
+student_records = []
+quiz_counter = 0
+
+def load_data():
+    """Load data from JSON files"""
+    global quizzes_dict, student_records, quiz_counter
+    
+    try:
+        # Load quizzes
+        if os.path.exists(QUIZZES_FILE):
+            with open(QUIZZES_FILE, 'r', encoding='utf-8') as f:
+                quizzes_dict = json.load(f)
+        else:
+            quizzes_dict = {}
+        
+        # Load student records
+        if os.path.exists(STUDENT_RECORDS_FILE):
+            with open(STUDENT_RECORDS_FILE, 'r', encoding='utf-8') as f:
+                student_records = json.load(f)
+        else:
+            student_records = []
+        
+        # Load counter
+        if os.path.exists(COUNTER_FILE):
+            with open(COUNTER_FILE, 'r', encoding='utf-8') as f:
+                counter_data = json.load(f)
+                quiz_counter = counter_data.get('quiz_counter', 0)
+        else:
+            quiz_counter = 0
+            
+    except Exception as e:
+        st.error(f"Error loading data: {str(e)}")
+        # Initialize empty data if loading fails
+        quizzes_dict = {}
+        student_records = []
+        quiz_counter = 0
+
+def save_quizzes():
+    """Save quizzes to JSON file"""
+    try:
+        with open(QUIZZES_FILE, 'w', encoding='utf-8') as f:
+            json.dump(quizzes_dict, f, indent=2, ensure_ascii=False)
+    except Exception as e:
+        st.error(f"Error saving quizzes: {str(e)}")
+
+def save_student_records():
+    """Save student records to JSON file"""
+    try:
+        with open(STUDENT_RECORDS_FILE, 'w', encoding='utf-8') as f:
+            json.dump(student_records, f, indent=2, ensure_ascii=False)
+    except Exception as e:
+        st.error(f"Error saving student records: {str(e)}")
+
+def save_counter():
+    """Save counter to JSON file"""
+    try:
+        with open(COUNTER_FILE, 'w', encoding='utf-8') as f:
+            json.dump({'quiz_counter': quiz_counter}, f, indent=2)
+    except Exception as e:
+        st.error(f"Error saving counter: {str(e)}")
+
+def authenticate_user(username, password):
+    """Authenticate admin/teacher user"""
+    if username in ADMIN_CREDENTIALS and ADMIN_CREDENTIALS[username] == password:
+        return True, "Authentication successful!"
+    else:
+        return False, "Invalid username or password!"
+
+def extract_key_entities_nltk(text):
+    """Extract key entities using NLTK"""
+    if not NLTK_SUPPORT:
+        return []
+    
+    try:
+        # Tokenize and POS tag
+        words = word_tokenize(text)
+        pos_tags = pos_tag(words)
+        
+        # Extract nouns and proper nouns
+        key_entities = []
+        for word, pos in pos_tags:
+            if pos in ['NN', 'NNS', 'NNP', 'NNPS'] and len(word) > 2:  # Nouns
+                key_entities.append(word.lower())
+        
+        return list(set(key_entities))[:10]  # Return top 10 unique entities
+    
+    except Exception as e:
+        st.error(f"NLTK entity extraction error: {str(e)}")
+        return []
+
+def extract_key_entities_spacy(text):
+    """Extract key entities using spaCy"""
+    if not SPACY_SUPPORT:
+        return []
+    
+    try:
+        doc = nlp(text)
+        entities = []
+        
+        # Extract named entities
+        for ent in doc.ents:
+            if ent.label_ in ['PERSON', 'ORG', 'GPE', 'PRODUCT', 'EVENT', 'WORK_OF_ART']:
+                entities.append(ent.text.lower())
+        
+        # Extract important nouns
+        nouns = [token.lemma_.lower() for token in doc 
+                if token.pos_ in ['NOUN', 'PROPN'] 
+                and len(token.text) > 3
+                and not token.is_stop]
+        
+        # Combine and get unique entities
+        all_entities = list(set(entities + nouns))
+        return all_entities[:15]  # Return top 15 unique entities
+    
+    except Exception as e:
+        st.error(f"spaCy entity extraction error: {str(e)}")
+        return []
+
+def extract_key_concepts(text):
+    """Extract key concepts using combined NLP approaches"""
+    key_concepts = []
+    
+    # Use spaCy if available
+    if SPACY_SUPPORT:
+        spacy_entities = extract_key_entities_spacy(text)
+        key_concepts.extend(spacy_entities)
+    
+    # Use NLTK as fallback or supplement
+    if NLTK_SUPPORT or not key_concepts:
+        nltk_entities = extract_key_entities_nltk(text)
+        key_concepts.extend(nltk_entities)
+    
+    # Fallback to simple word frequency if NLP fails
+    if not key_concepts:
+        words = re.findall(r'\b[a-zA-Z]{4,}\b', text.lower())
+        stop_words = set(stopwords.words('english')) if NLTK_SUPPORT else set()
+        filtered_words = [word for word in words if word not in stop_words]
+        from collections import Counter
+        common_words = Counter(filtered_words).most_common(10)
+        key_concepts = [word for word, count in common_words]
+    
+    return list(set(key_concepts))  # Return unique concepts
+
+def generate_question_from_sentence(sentence, key_concepts, question_type):
+    """Generate a specific type of question from a sentence"""
+    
+    if SPACY_SUPPORT:
+        doc = nlp(sentence)
+        # Extract subject and main verb
+        subjects = [token.text for token in doc if token.dep_ in ["nsubj", "nsubjpass"]]
+        verbs = [token.lemma_ for token in doc if token.pos_ == "VERB"]
+        objects = [token.text for token in doc if token.dep_ in ["dobj", "attr", "pobj"]]
+    else:
+        # Simple fallback
+        words = word_tokenize(sentence) if NLTK_SUPPORT else sentence.split()
+        subjects = words[:3]  # Simple approximation
+        verbs = []
+        objects = []
+    
+    main_subject = subjects[0] if subjects else "the text"
+    main_verb = verbs[0] if verbs else "discusses"
+    main_object = objects[0] if objects else "concepts"
+    
+    question_templates = {
+        'comprehension': [
+            f"What is the main idea expressed in this sentence?",
+            f"What does this sentence primarily discuss?",
+            f"What is the key point being made here?"
+        ],
+        'detail': [
+            f"According to the text, what is mentioned about {main_subject}?",
+            f"What specific information is provided regarding {main_object}?",
+            f"What details are given about {main_subject}?"
+        ],
+        'inference': [
+            f"What can be inferred from this statement about {main_subject}?",
+            f"Based on this information, what conclusion can be drawn about {main_object}?",
+            f"What implication does this statement have for understanding {main_subject}?"
+        ],
+        'application': [
+            f"How does this information about {main_subject} apply in practice?",
+            f"What practical significance does this statement about {main_object} have?",
+            f"How might this concept of {main_subject} be used?"
+        ]
+    }
+    
+    import random
+    template_type = question_type if question_type in question_templates else random.choice(list(question_templates.keys()))
+    template = random.choice(question_templates[template_type])
+    
+    return template
+
+def generate_distractors(correct_answer, key_concepts, sentence_context):
+    """Generate plausible distractors for MCQ options"""
+    distractors = []
+    
+    # Type 1: Related but incorrect concepts
+    if key_concepts:
+        related = [concept for concept in key_concepts if concept != correct_answer]
+        if related:
+            distractors.append(f"Focuses on {random.choice(related)} instead")
+    
+    # Type 2: Opposite or contrasting ideas
+    opposites = ["opposite perspective", "contrasting view", "different approach", "alternative interpretation"]
+    distractors.append(f"Describes the {random.choice(opposites)}")
+    
+    # Type 3: Overgeneralization
+    generalizations = ["broader context without specifics", "general principles only", "overview without details"]
+    distractors.append(f"Provides a {random.choice(generalizations)}")
+    
+    # Type 4: Specific but wrong detail
+    specifics = ["technical specifications", "historical background", "methodological details", "comparative analysis"]
+    distractors.append(f"Emphasizes {random.choice(specifics)}")
+    
+    # Ensure we have exactly 3 distractors
+    while len(distractors) < 3:
+        distractors.append(f"Discusses related but different aspects")
+    
+    return distractors[:3]
+
+def generate_mcqs_from_text(text, num_questions=10):
+    """Generate high-quality MCQs from descriptive text using NLP"""
+    try:
+        # Preprocess text
+        text = re.sub(r'\s+', ' ', text).strip()
+        
+        # Extract key concepts using NLP
+        key_concepts = extract_key_concepts(text)
+        
+        # Split into meaningful sentences
+        if SPACY_SUPPORT:
+            doc = nlp(text)
+            sentences = [sent.text.strip() for sent in doc.sents if len(sent.text.strip()) > 40]
+        elif NLTK_SUPPORT:
+            sentences = sent_tokenize(text)
+            sentences = [s.strip() for s in sentences if len(s.strip()) > 40]
+        else:
+            # Fallback to regex
+            sentences = re.split(r'[.!?]+', text)
+            sentences = [s.strip() for s in sentences if len(s.strip()) > 40]
+        
+        if not sentences:
+            st.warning("No meaningful sentences found in the text.")
+            return []
+        
+        # Limit number of questions
+        num_questions = min(num_questions, len(sentences))
+        questions = []
+        
+        # Question types for variety
+        question_types = ['comprehension', 'detail', 'inference', 'application']
+        
+        import random
+        
+        for i in range(num_questions):
+            sentence = sentences[i]
+            question_type = question_types[i % len(question_types)]
+            
+            # Generate question
+            question_text = generate_question_from_sentence(sentence, key_concepts, question_type)
+            
+            # Generate correct answer based on question type
+            if question_type == 'comprehension':
+                correct_answer = f"The main idea about the central concept"
+            elif question_type == 'detail':
+                correct_answer = f"Specific information provided in the text"
+            elif question_type == 'inference':
+                correct_answer = f"Logical conclusion based on the evidence"
+            else:  # application
+                correct_answer = f"Practical implications and applications"
+            
+            # Generate distractors
+            distractors = generate_distractors(correct_answer, key_concepts, sentence)
+            
+            # Combine options
+            all_options = [correct_answer] + distractors
+            random.shuffle(all_options)
+            
+            # Find new position of correct answer
+            correct_index = all_options.index(correct_answer)
+            
+            questions.append({
+                'question_text': question_text,
+                'options': all_options,
+                'correct_answer': correct_index,
+                'auto_generated': True,
+                'source_sentence': sentence[:100] + "..." if len(sentence) > 100 else sentence
+            })
+        
+        st.success(f"✅ Generated {len(questions)} MCQs using NLP analysis")
+        if key_concepts:
+            st.info(f"📊 Key concepts identified: {', '.join(key_concepts[:8])}")
+        
+        return questions
+        
+    except Exception as e:
+        st.error(f"Error generating MCQs with NLP: {str(e)}")
+        # Fallback to basic generation
+        return generate_mcqs_from_text_basic(text, num_questions)
+
+def generate_mcqs_from_text_basic(text, num_questions=5):
+    """Fallback basic MCQ generation without NLP"""
+    try:
+        sentences = re.split(r'[.!?]+', text)
+        sentences = [s.strip() for s in sentences if len(s.strip()) > 30]
+        
+        if len(sentences) < num_questions:
+            num_questions = len(sentences)
+        
+        questions = []
+        import random
+        
+        for i in range(num_questions):
+            if i >= len(sentences):
+                break
+                
+            sentence = sentences[i]
+            question_text = f"What is the primary focus of this statement: '{sentence[:80]}...'?"
+            
+            # Generate varied options
+            options = [
+                "The main concept and its implications",
+                "Technical specifications and details", 
+                "Historical context and background",
+                "Comparative analysis with other topics"
+            ]
+            
+            # Shuffle options
+            random.shuffle(options)
+            correct_index = random.randint(0, 3)  # Random correct answer
+            
+            questions.append({
+                'question_text': question_text,
+                'options': options,
+                'correct_answer': correct_index,
+                'auto_generated': True
+            })
+        
+        return questions
+        
+    except Exception as e:
+        st.error(f"Error in basic MCQ generation: {str(e)}")
+        return []
+
+# ... [The rest of your existing functions remain the same - parse_document, parse_mcqs_from_text, etc.]
+
+def parse_document(file_obj, generate_mcqs=False):
+    """Parse PDF or DOCX file and extract MCQs"""
+    global quiz_counter
+    
+    try:
+        if file_obj is None:
+            return "Please select a file to upload."
+        
+        text = ""
+        filename = file_obj.name
+        
+        try:
+            if filename.endswith('.pdf'):
+                if not PDF_SUPPORT:
+                    return "PDF support not available. Please install PyPDF2."
+                # Read PDF file
+                pdf_reader = PdfReader(file_obj)
+                for page in pdf_reader.pages:
+                    page_text = page.extract_text()
+                    if page_text:
+                        text += page_text + "\n"
+                    
+            elif filename.endswith('.docx'):
+                if not DOCX_SUPPORT:
+                    return "DOCX support not available. Please install python-docx."
+                # Read DOCX file
+                doc = Document(file_obj)
+                for paragraph in doc.paragraphs:
+                    if paragraph.text.strip():
+                        text += paragraph.text + "\n"
+            else:
+                return "Unsupported file format. Please upload PDF or DOCX."
+        
+        except Exception as e:
+            return f"Error reading file: {str(e)}"
+        
+        if not text.strip():
+            return "No readable text found in the document."
+        
+        # Parse or generate MCQs
+        if generate_mcqs:
+            # Use NLP-enhanced generation
+            questions = generate_mcqs_from_text(text, num_questions=8)  # Generate 8 questions by default
+            if not questions:
+                return "Could not generate MCQs from the document."
+            message = f"✅ Successfully generated {len(questions)} MCQs using NLP analysis"
+        else:
+            questions = parse_mcqs_from_text(text)
+            if not questions:
+                return "No MCQs found in the document."
+            message = f"✅ Successfully parsed {len(questions)} questions"
+        
+        # Create quiz entry
+        quiz_counter += 1
+        quiz_id = f"quiz_{quiz_counter}"
+        quiz_title = os.path.basename(filename)
+        
+        quizzes_dict[quiz_id] = {
+            'title': quiz_title,
+            'questions': questions,
+            'filename': filename,
+            'enabled': False,
+            'auto_generated': generate_mcqs,
+            'duration_minutes': len(questions) * 2  # 2 minutes per question
+        }
+        
+        # Save data
+        save_quizzes()
+        save_counter()
+        
+        return f"{message} - Duration: {len(questions) * 2} minutes"
+    
+    except Exception as e:
+        return f"Unexpected error: {str(e)}"
+
+# ... [The rest of your existing code remains unchanged]
+
+# Import libraries with error handling
+try:
+    from PyPDF2 import PdfReader
+    PDF_SUPPORT = True
+except ImportError:
+    PDF_SUPPORT = False
+    st.warning("PyPDF2 not installed. PDF uploads will not work.")
+
+try:
+    from docx import Document
+    DOCX_SUPPORT = True
+except ImportError:
+    DOCX_SUPPORT = False
+    st.warning("python-docx not installed. DOCX uploads will not work.")
+
 # File paths for persistence
 QUIZZES_FILE = "quizzes.json"
 STUDENT_RECORDS_FILE = "student_records.json"
@@ -948,3 +1439,4 @@ st.markdown("""
     <p>🎯 <strong>Digital Pakistan Quiz Management System</strong> - Streamlining education through technology</p>
 </div>
 """, unsafe_allow_html=True)
+
