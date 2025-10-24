@@ -1,29 +1,32 @@
-# Digital Pakistan Quiz Management System
+# 🎯 Digital Pakistan Quiz Management System
 
-A comprehensive quiz management system built with Streamlit that allows teachers to upload quiz documents and students to take timed quizzes.
+A comprehensive web application for creating, managing, and taking quizzes built with Streamlit.
 
 ## Features
 
-- **Teacher Panel**: Upload PDF/DOCX files with MCQs, set correct answers, enable/disable quizzes
-- **Student Panel**: Take quizzes with real-time timer, auto-submission when time expires
-- **Timer System**: Visual countdown timer with color changes and auto-submission
-- **File Support**: Upload PDF and DOCX documents
-- **MCQ Generation**: Auto-generate MCQs from descriptive text
-- **Results Tracking**: Store and display student results with Excel export
+### 👨‍🏫 Teacher Admin Panel
+- Upload PDF/DOCX documents with MCQs
+- AI-powered MCQ generation from descriptive text
+- Set correct answers for quizzes
+- Enable/disable quizzes for students
+- View and download student results
+- Excel report generation
 
-## Deployment on Streamlit Cloud
+### 🎓 Student Panel
+- Take available quizzes with timer
+- Real-time quiz timer with auto-submission
+- Instant score results
+- User-friendly interface
 
-1. Fork this repository
-2. Go to [Streamlit Cloud](https://streamlit.io/cloud)
-3. Click "New app" and connect your GitHub repository
-4. Set the main file path to `app.py`
-5. Deploy!
+## 🚀 Live Demo
 
-## Teacher Login
-- Username: `admin`
-- Password: `Admin123`
+[![Streamlit App](https://static.streamlit.io/badges/streamlit_badge_black_white.svg)](https://your-username-digital-pakistan-quiz-app.streamlit.app/)
 
-## Local Development
+## 📦 Installation
+
+### Local Development
+
+1. Clone the repository:
 ```bash
-pip install -r requirements.txt
-streamlit run app.py
+git clone https://github.com/your-username/digital-pakistan-quiz-app.git
+cd digital-pakistan-quiz-app
